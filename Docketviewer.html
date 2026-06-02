@@ -310,7 +310,8 @@
 <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.print.min.js"></script>
 
 <script>
-var PROXY_URL     = 'https://docket-proxy.jgranton.workers.dev';
+// Configuration — will be loaded from worker config endpoint
+var PROXY_URL     = null;  // Will be set in init
 var _searchMode   = 'file';   // 'file' | 'party'
 var _bulkEntries  = {};        // court number → RE entries[], for bulk AI
 var _partyAll     = [];        // full party search results (unfiltered)
@@ -323,12 +324,33 @@ $(document).ready(function () {
         new bootstrap.Popover(el, { container: 'body' });
     });
 
-    // URL routing — supports single file (?IMM-12345-25) and bulk (?IMM-1-25,IMM-2-25)
-    var qs = window.location.search.substring(1);
-    if (qs) {
-        var val = decodeURIComponent(qs);
-        $('#courtNumberInput').val(val);
-        loadDocket(val);
+    // Fetch proxy URL from worker config endpoint
+    // Fallback: if config fails, try to infer from window.location
+    $.ajax({
+        url: window.location.origin + '/?type=config',
+        method: 'GET',
+        dataType: 'json',
+        timeout: 5000,
+    })
+    .done(function (config) {
+        PROXY_URL = config.proxyUrl || window.location.origin + '/';
+        initializeApp();
+    })
+    .fail(function () {
+        // Fallback: assume proxy is same origin
+        PROXY_URL = window.location.origin + '/';
+        console.warn('Could not fetch config from worker, using fallback PROXY_URL');
+        initializeApp();
+    });
+
+    function initializeApp() {
+        // URL routing — supports single file (?IMM-12345-25) and bulk (?IMM-1-25,IMM-2-25)
+        var qs = window.location.search.substring(1);
+        if (qs) {
+            var val = decodeURIComponent(qs);
+            $('#courtNumberInput').val(val);
+            loadDocket(val);
+        }
     }
 });
 

@@ -1,22 +1,17 @@
 /**
  * Cloudflare Worker — Federal Court Docket Proxy + Milestone Analysis
  *
- * Secrets required (set in Cloudflare dashboard → Worker → Settings → Variables and Secrets):
- *   GEMINI_API_KEY
+ * Environment Variables (set in Cloudflare dashboard → Worker → Settings → Variables):
+ *   ALLOWED_ORIGINS      (string, comma-separated)
+ *   GEMINI_API_KEY       (secret)
  *
  * Endpoints:
  *   GET  /?type=case&courtnumber=IMM-12345-25
  *   GET  /?type=re&courtnumber=IMM-12345-25
  *   GET  /?type=parties&courtnumber=IMM-12345-25
  *   POST /?type=milestones  (body: { entries: [...] })
+ *   GET  /?type=config         (returns proxy URL and origins for client-side use)
  */
-
-const ALLOWED_ORIGINS = new Set([
-  'https://docketviewer.grantonlaw.ca',
-  'https://docketviewer.grantonlaw.com',
-  'https://docketviewerbeta.grantonlaw.ca',
-  'https://docketviewerbeta.grantonlaw.com',
-]);
 const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
@@ -98,6 +93,11 @@ Return ONLY the following JSON — no markdown, no explanation:
 // ── Main handler ──────────────────────────────────────────────────────────────
 export default {
   async fetch(request, env) {
+    // Parse allowed origins from environment (comma-separated)
+    const allowedOriginsEnv = (env.ALLOWED_ORIGINS || '').split(',')
+      .map(o => o.trim())
+      .filter(Boolean);
+    const ALLOWED_ORIGINS = new Set(allowedOriginsEnv);
 
     const origin  = request.headers.get('Origin')  || '';
     const referer = request.headers.get('Referer') || '';
@@ -124,6 +124,19 @@ export default {
     const clientIp = request.headers.get('CF-Connecting-IP') || 'unknown';
     const url      = new URL(request.url);
     const type     = url.searchParams.get('type') || '';
+
+    // ── Config endpoint (no origin check needed — public) ──────────────────────
+    if (type === 'config') {
+      return new Response(JSON.stringify({
+        proxyUrl: request.url.split('?')[0],  // Returns worker URL without query
+        allowedOrigins: allowedOriginsEnv
+      }), {
+        headers: {
+          'Content-Type': 'application/json;charset=utf-8',
+          'Cache-Control': 'public, max-age=3600'  // Cache for 1 hour
+        }
+      });
+    }
 
     // ── Milestones (POST) ────────────────────────────────────────────────────
     if (type === 'milestones') {

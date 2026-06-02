@@ -1,0 +1,17 @@
+name = "docket-proxy"
+type = "javascript"
+account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+workers_dev = true
+route = ""
+zone_id = ""
+
+# Local development environment variables
+[env.development]
+vars = { ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:8000,http://localhost:5173" }
+
+# Production environment
+[env.production]
+vars = { ALLOWED_ORIGINS = "https://docketviewer.grantonlaw.ca,https://docketviewer.grantonlaw.com,https://docketviewerbeta.grantonlaw.ca,https://docketviewerbeta.grantonlaw.com" }
+
+# Secrets (set separately in Cloudflare dashboard or via `wrangler secret put`)
+# wrangler secret put GEMINI_API_KEY --env production
