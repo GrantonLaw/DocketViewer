@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Federal Court Docket Viewer — Granton Law</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏛️</text></svg>">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.bootstrap5.min.css" rel="stylesheet">
+
+    <style>
+        body { background: #f4f6f9; font-size: 0.9rem; }
+
+        .topbar { background: #1a3a5c; color: #fff; padding: 0.75rem 1.25rem; }
+        .topbar a { color: #aed6f1; text-decoration: none; font-size: 0.8rem; }
+        .topbar a:hover { color: #fff; }
+        .topbar h5 { margin: 0; font-size: 1rem; font-weight: 600; letter-spacing: 0.02em; }
+        .topbar small { opacity: 0.7; font-size: 0.75rem; }
+
+        #search-bar { background: #fff; border-bottom: 1px solid #dde3ea; padding: 0.6rem 1.25rem; }
+
+        /* Search mode toggle */
+        .search-mode-btn { font-size: 0.78rem; }
+        .search-mode-btn.active { background: #1a3a5c !important; border-color: #1a3a5c !important; color: #fff !important; }
+
+        .case-card { border-left: 4px solid #1a3a5c; border-radius: 0.375rem; }
+        .case-card .card-title { font-size: 1.05rem; font-weight: 700; color: #1a3a5c; margin-bottom: 0.6rem; }
+
+        .meta-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6c757d; margin-bottom: 0.1rem; }
+        .meta-value { font-weight: 500; color: #212529; }
+
+        /* ── Status milestones ── */
+        .status-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 2px; }
+
+        .s-text {
+            font-weight: 800; font-size: 0.82rem; letter-spacing: 0.05em;
+            white-space: nowrap; padding: 3px 8px; border-radius: 4px;
+        }
+        .s-green     { color: #fff; background: #28a745; }
+        .s-amber     { color: #fff; background: #e07b00; }
+        .s-amber-exp { color: #fff; background: #dc3545; }
+        .s-neutral   { color: #fff; background: #495057; }
+        .s-red       { color: #fff; background: #dc3545; }
+        .s-gray      { color: #fff; background: #6c757d; }
+
+        /* ── Docket entries table ── */
+        #docketTable thead th { background: #1a3a5c; color: #fff; font-size: 0.8rem; white-space: nowrap; }
+        #docketTable td { vertical-align: top; font-size: 0.85rem; }
+        .re-entry { white-space: pre-line; line-height: 1.45; }
+        .badge-office {
+            font-size: 0.75rem; background: #e8eef4; color: #1a3a5c;
+            padding: 0.2rem 0.5rem; border-radius: 0.25rem; font-weight: 500;
+        }
+
+        #loading { display: none; padding: 3rem 1rem; text-align: center; color: #6c757d; }
+        #error-msg { display: none; }
+        #case-section { display: none; }
+
+        .dataTables_wrapper .dataTables_length select,
+        .dataTables_wrapper .dataTables_filter input { font-size: 0.82rem; }
+        .dt-buttons .btn {
+            font-size: 0.8rem;
+            background: #fff;
+            border-color: #6c757d;
+            color: #343a40;
+        }
+        .dt-buttons .btn:hover {
+            background: #1a3a5c;
+            border-color: #1a3a5c;
+            color: #fff;
+        }
+
+        .divider { border-top: 1px solid #e9ecef; margin: 0.6rem 0; }
+
+        .panel-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #6c757d; }
+        .ms-help-icon {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 13px; height: 13px; border-radius: 50%;
+            border: 1px solid #ced4da; color: #ced4da;
+            font-size: 0.6rem; font-weight: 700; cursor: default; line-height: 1;
+            flex-shrink: 0;
+        }
+
+        /* ── Bulk search table ── */
+        #bulk-section { display: none; }
+        #bulk-table thead th { background: #1a3a5c; color: #fff; font-size: 0.8rem; white-space: nowrap; }
+        #bulk-table td { vertical-align: middle; font-size: 0.85rem; }
+        #bulk-table td.ms-cell { vertical-align: middle; }
+        .bulk-ai-row td { border-top: none !important; background: #f0f3f7; padding-top: 2px !important; padding-bottom: 8px !important; }
+
+        /* ── Party search table ── */
+        #party-section { display: none; }
+        #party-table thead th { background: #1a3a5c; color: #fff; font-size: 0.8rem; white-space: nowrap; }
+        #party-table td { vertical-align: top; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+
+<div class="topbar d-flex justify-content-between align-items-center">
+    <div>
+        <h5>Federal Court Docket Viewer</h5>
+        <small>Granton Law</small>
+    </div>
+    <a href="https://www.fct-cf.ca/en/court-files-and-decisions/court-files" target="_blank">Open Federal Court ↗</a>
+</div>
+
+<div id="search-bar">
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+        <!-- Mode toggle -->
+        <div class="btn-group btn-group-sm flex-shrink-0" role="group" aria-label="Search mode">
+            <button type="button" class="btn btn-outline-secondary search-mode-btn active" id="tab-file"
+                    onclick="setSearchMode('file')">Court File</button>
+            <button type="button" class="btn btn-outline-secondary search-mode-btn" id="tab-party"
+                    onclick="setSearchMode('party')">Party Search</button>
+        </div>
+        <!-- Court file number input -->
+        <div class="input-group input-group-sm" id="input-file" style="max-width:460px">
+            <input type="text" id="courtNumberInput" class="form-control"
+                   placeholder="IMM-12345-25  (comma-separated for bulk)"
+                   onkeydown="if(event.key==='Enter') loadDocket()">
+            <button class="btn btn-primary" onclick="loadDocket()">Search</button>
+        </div>
+        <!-- Party name input -->
+        <div class="input-group input-group-sm" id="input-party" style="max-width:460px; display:none">
+            <input type="text" id="partyNameInput" class="form-control"
+                   placeholder="Name or style of cause"
+                   onkeydown="if(event.key==='Enter') searchParty()">
+            <button class="btn btn-primary" onclick="searchParty()">Search</button>
+        </div>
+        <!-- Party proceeding type filter — shown only in party search mode -->
+        <div class="btn-group btn-group-sm flex-shrink-0" id="party-filter-wrap" style="display:none" role="group" aria-label="Proceeding filter">
+            <button type="button" class="btn btn-outline-secondary search-mode-btn active" id="pf-imm" onclick="setPartyFilter('imm')">IMM</button>
+            <button type="button" class="btn btn-outline-secondary search-mode-btn" id="pf-all" onclick="setPartyFilter('all')">All</button>
+        </div>
+    </div>
+</div>
+
+<div class="container-fluid px-3 mt-3">
+
+    <div id="loading">
+        <div class="spinner-border text-secondary" role="status" style="width:1.5rem;height:1.5rem;"></div>
+        <div class="mt-2">Loading…</div>
+    </div>
+
+    <div id="error-msg" class="alert alert-warning"></div>
+
+    <!-- ── Single-file view ─────────────────────────────────────────────────── -->
+    <div id="case-section">
+
+        <div class="card case-card mb-3">
+            <div class="card-body py-3">
+
+                <!-- Style of cause -->
+                <div class="card-title" id="style-of-cause"></div>
+
+                <!-- Case metadata -->
+                <div class="row g-3">
+                    <div class="col-6 col-md-2">
+                        <div class="meta-label">Court File</div>
+                        <div class="meta-value" id="court-no"></div>
+                    </div>
+                    <div class="col-6 col-md-4">
+                        <div class="meta-label">Nature of Proceeding</div>
+                        <div class="meta-value" id="nature-desc"></div>
+                    </div>
+                    <div class="col-6 col-md-2">
+                        <div class="meta-label">Office</div>
+                        <div class="meta-value" id="office"></div>
+                    </div>
+                    <div class="col-6 col-md-2">
+                        <div class="meta-label">Date Filed</div>
+                        <div class="meta-value" id="filing-date"></div>
+                    </div>
+                    <div class="col-12 col-md-2">
+                        <div class="meta-label">Track</div>
+                        <div class="meta-value" id="track"></div>
+                    </div>
+                </div>
+
+                <!-- Counsel -->
+                <div class="divider"></div>
+                <div class="row g-3" id="counsel-row">
+                    <div class="col-6 col-md-3" id="applicant-info">
+                        <div class="meta-label">Firm (Applicant)</div>
+                        <div class="meta-value" id="applicant-firm">—</div>
+                        <div class="meta-label mt-2">Counsel (Applicant)</div>
+                        <div class="meta-value" id="applicant-counsel">—</div>
+                    </div>
+                    <div class="col-6 col-md-3" id="respondent-info" style="display:none">
+                        <div class="meta-label">Firm (Respondent)</div>
+                        <div class="meta-value" id="respondent-firm">—</div>
+                        <div class="meta-label mt-2">Counsel (Respondent)</div>
+                        <div class="meta-value" id="respondent-counsel">—</div>
+                    </div>
+                </div>
+
+                <!-- Panel 1: Regex milestones -->
+                <div class="divider"></div>
+                <div class="d-flex align-items-center gap-1 mb-1">
+                    <span class="panel-label">Milestones</span>
+                    <span class="ms-help-icon"
+                          data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-placement="right"
+                          data-bs-content="Detects milestones by searching for keywords in the docket entries. Fast and free, but may miss events that use unusual or unexpected phrasing.">?</span>
+                </div>
+                <div id="status-row" class="status-row"></div>
+
+                <!-- Panel 2: AI milestones -->
+                <div class="divider mt-3"></div>
+                <div class="d-flex align-items-center gap-1 mb-1">
+                    <span class="panel-label">Advanced Milestone Analysis</span>
+                    <span class="ms-help-icon"
+                          data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-placement="right"
+                          data-bs-content="Uses Gemini 3.1 Flash Lite to analyse docket entries for milestones. More thorough than keyword matching, but may incur costs for the host of this tool. Recommended only when the standard Milestones panel is insufficient. Analysis may be slow or unavailable during peak demand.">?</span>
+                </div>
+                <div id="ai-analyse-wrap" class="mb-1">
+                    <button id="ai-analyse-btn" class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem;" onclick="triggerAIMilestones()">Analyse</button>
+                </div>
+                <div id="ai-status-row" class="status-row"></div>
+
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center mb-2 gap-2">
+            <h6 class="mb-0">Recorded Entries</h6>
+            <span class="badge bg-secondary" id="re-count">0</span>
+        </div>
+
+        <div class="table-responsive">
+            <table id="docketTable" class="table table-sm table-striped table-bordered" style="width:100%">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Date</th>
+                        <th>Office</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody id="docket-body"></tbody>
+            </table>
+        </div>
+
+    </div><!-- /#case-section -->
+
+    <!-- ── Bulk search results ──────────────────────────────────────────────── -->
+    <div id="bulk-section">
+        <div class="d-flex align-items-center mb-2 gap-2 flex-wrap">
+            <h6 class="mb-0">Bulk Docket Search</h6>
+            <span class="badge bg-secondary" id="bulk-count">0</span>
+            <span class="text-muted" style="font-size:0.78rem">— click a file number to open the full docket</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered" id="bulk-table" style="width:100%">
+                <thead>
+                    <tr>
+                        <th style="width:130px">Court File</th>
+                        <th style="min-width:180px">Style of Cause</th>
+                        <th>Milestones</th>
+                        <th style="width:82px; text-align:center">AI</th>
+                    </tr>
+                </thead>
+                <tbody id="bulk-body"></tbody>
+            </table>
+        </div>
+    </div><!-- /#bulk-section -->
+
+    <!-- ── Party search results ─────────────────────────────────────────────── -->
+    <div id="party-section">
+        <div class="d-flex align-items-center mb-2 gap-2">
+            <h6 class="mb-0">Party Search Results</h6>
+            <span class="badge bg-secondary" id="party-count">0</span>
+        </div>
+        <div id="party-cap-warn" class="alert alert-warning py-2 mb-2" style="font-size:0.82rem; display:none"></div>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered table-hover" id="party-table" style="width:100%">
+                <thead>
+                    <tr>
+                        <th style="white-space:nowrap">Court File</th>
+                        <th>Style of Cause</th>
+                        <th>Nature</th>
+                        <th style="white-space:nowrap">Date Filed</th>
+                        <th>Office</th>
+                    </tr>
+                </thead>
+                <tbody id="party-body"></tbody>
+            </table>
+        </div>
+    </div><!-- /#party-section -->
+
+</div><!-- /.container-fluid -->
+
+<!-- Footer -->
+<footer style="background:#fff; border-top:1px solid #dde3ea; margin-top:2rem; padding:1rem 1.25rem; font-size:0.75rem; color:#6c757d; line-height:1.5;">
+    <strong style="color:#212529;">Reproduction Notice</strong> — Court file data reproduced from the
+    <em>Federal Court of Canada — Court Files and Decisions</em> (fct-cf.gc.ca), published by the Government of Canada.
+    This tool is for personal, non-commercial use only. Users should exercise due diligence in verifying the accuracy
+    of reproduced materials. This reproduction has not been produced in affiliation with, nor with the endorsement of,
+    the Government of Canada.
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.print.min.js"></script>
+
+<script>
+var PROXY_URL     = 'https://docket-proxy.jgranton.workers.dev';
+var _searchMode   = 'file';   // 'file' | 'party'
+var _bulkEntries  = {};        // court number → RE entries[], for bulk AI
+var _partyAll     = [];        // full party search results (unfiltered)
+var _partyFilter  = 'imm';    // 'imm' | 'all'
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+$(document).ready(function () {
+    document.querySelectorAll('[data-bs-toggle="popover"]').forEach(function (el) {
+        new bootstrap.Popover(el, { container: 'body' });
+    });
+
+    // URL routing — supports single file (?IMM-12345-25) and bulk (?IMM-1-25,IMM-2-25)
+    var qs = window.location.search.substring(1);
+    if (qs) {
+        var val = decodeURIComponent(qs);
+        $('#courtNumberInput').val(val);
+        loadDocket(val);
+    }
+});
+
+// ── Search mode toggle ────────────────────────────────────────────────────────
+
+function setSearchMode(mode) {
+    _searchMode = mode;
+    $('#tab-file, #tab-party').removeClass('active');
+    if (mode === 'file') {
+        $('#tab-file').addClass('active');
+        $('#input-file').show();
+        $('#input-party, #party-filter-wrap').hide();
+    } else {
+        $('#tab-party').addClass('active');
+        $('#input-file').hide();
+        $('#input-party, #party-filter-wrap').show();
+        // Clear results when switching to party search
+        $('#case-section, #bulk-section, #error-msg').hide();
+    }
+}
+
+// ── Single-file + bulk dispatcher ─────────────────────────────────────────────
+
+function loadDocket(courtNumber) {
+    courtNumber = (courtNumber || $('#courtNumberInput').val()).trim().toUpperCase();
+    if (!courtNumber) { showError('Please enter a court file number.'); return; }
+
+    // Comma-separated → bulk mode
+    if (courtNumber.indexOf(',') !== -1) {
+        loadBulk(courtNumber);
+        return;
+    }
+
+    history.replaceState(null, '', '?' + encodeURIComponent(courtNumber));
+    document.title = courtNumber + ' — Docket Viewer';
+
+    $('#loading').show();
+    $('#case-section, #bulk-section, #party-section').hide();
+    $('#error-msg').hide();
+
+    var caseReq = $.getJSON(PROXY_URL + '?type=case&courtnumber=' + encodeURIComponent(courtNumber));
+    var reReq   = $.getJSON(PROXY_URL + '?type=re&courtnumber='   + encodeURIComponent(courtNumber));
+
+    $.when(caseReq, reReq)
+        .done(function (caseResult, reResult) {
+            $('#loading').hide();
+            var caseData = caseResult[0];
+            var reData   = reResult[0];
+
+            if (!caseData.data || caseData.data.length === 0) {
+                showError('No court file found for <strong>' + escHtml(courtNumber) + '</strong>.');
+                return;
+            }
+
+            // Fetch parties separately — non-critical
+            $.getJSON(PROXY_URL + '?type=parties&courtnumber=' + encodeURIComponent(courtNumber))
+                .done(function (partiesData) {
+                    renderPage(caseData.data[0], reData, partiesData);
+                })
+                .fail(function () {
+                    renderPage(caseData.data[0], reData, { data: [] });
+                });
+        })
+        .fail(function () {
+            $('#loading').hide();
+            showError('Could not retrieve docket data. Check the file number and try again.');
+        });
+}
+
+// ── Bulk search ───────────────────────────────────────────────────────────────
+
+function loadBulk(input) {
+    var numbers = input.split(',')
+        .map(function (s) { return s.trim().toUpperCase(); })
+        .filter(Boolean);
+
+    if (!numbers.length) { showError('No court file numbers found.'); return; }
+
+    var invalid = numbers.filter(function (cn) {
+        return !/^[A-Z0-9]+-[0-9]+-[0-9]{2,4}$/.test(cn);
+    });
+    if (invalid.length) {
+        showError('Invalid court number format: <strong>' + invalid.map(escHtml).join(', ') + '</strong>');
+        return;
+    }
+
+    _bulkEntries = {};
+    history.replaceState(null, '', '?' + encodeURIComponent(input));
+    document.title = 'Bulk (' + numbers.length + ') — Docket Viewer';
+
+    $('#loading').hide();
+    $('#case-section, #party-section, #error-msg').hide();
+    $('#bulk-section').show();
+    $('#bulk-count').text(numbers.length);
+
+    var tbody = $('#bulk-body').empty();
+
+    // Build skeleton rows
+    numbers.forEach(function (cn) {
+        var $row = $('<tr>').attr('data-cn', cn);
+        $row.append(
+            $('<td>').html('<a href="?' + encodeURIComponent(cn) + '">' + escHtml(cn) + '</a>')
+        );
+        $row.append(
+            $('<td class="bulk-soc">').html('<span class="text-muted" style="font-size:0.82rem">Loading…</span>')
+        );
+        $row.append(
+            $('<td class="ms-cell">').html('<span class="text-muted" style="font-size:0.78rem">Loading…</span>')
+        );
+        $row.append(
+            $('<td class="text-center">').html(
+                '<button class="btn btn-sm btn-outline-secondary bulk-ai-btn" '
+                + 'data-cn="' + escHtml(cn) + '" style="font-size:0.75rem" disabled>Analyse</button>'
+            )
+        );
+        tbody.append($row);
+    });
+
+    // Fetch each file concurrently
+    numbers.forEach(function (cn) {
+        var caseReq = $.getJSON(PROXY_URL + '?type=case&courtnumber=' + encodeURIComponent(cn));
+        var reReq   = $.getJSON(PROXY_URL + '?type=re&courtnumber='   + encodeURIComponent(cn));
+
+        $.when(caseReq, reReq)
+            .done(function (caseResult, reResult) {
+                var caseData = caseResult[0];
+                var reData   = reResult[0];
+                var $row     = $('[data-cn="' + cn + '"]', '#bulk-body');
+
+                if (!caseData.data || !caseData.data.length) {
+                    $row.find('.bulk-soc').html('<span class="text-danger" style="font-size:0.82rem">Not found</span>');
+                    $row.find('.ms-cell').empty();
+                    return;
+                }
+
+                var c       = caseData.data[0];
+                var entries = reData.data || [];
+                _bulkEntries[cn] = entries;
+
+                $row.find('.bulk-soc').text(c.STYLE_OF_CAUSE || '—');
+
+                var ms      = detectMilestonesRegex(entries);
+                var $msWrap = $('<div>').addClass('status-row');
+                renderMilestones(ms, $msWrap[0]);
+                $row.find('.ms-cell').html($msWrap);
+
+                $row.find('.bulk-ai-btn').prop('disabled', false);
+            })
+            .fail(function () {
+                $('[data-cn="' + cn + '"]', '#bulk-body')
+                    .find('.bulk-soc')
+                    .html('<span class="text-danger" style="font-size:0.82rem">Error</span>');
+            });
+    });
+}
+
+// Bulk AI button — event delegation
+$(document).on('click', '.bulk-ai-btn', function () {
+    var $btn    = $(this);
+    var cn      = $btn.data('cn');
+    var entries = _bulkEntries[cn] || [];
+
+    // Remove any previous AI expand row for this file
+    $('[data-ai-for="' + cn + '"]').remove();
+    $btn.prop('disabled', true).text('Analysing…');
+
+    $.ajax({
+        url:         PROXY_URL + '?type=milestones',
+        method:      'POST',
+        contentType: 'application/json',
+        data:        JSON.stringify({ entries: entries }),
+        dataType:    'json',
+        timeout:     60000,
+    })
+    .done(function (m) {
+        var $mainRow = $('[data-cn="' + cn + '"]', '#bulk-body');
+        var $msWrap  = $('<div>').addClass('status-row');
+        renderMilestones(m, $msWrap[0]);
+
+        var $aiRow = $('<tr class="bulk-ai-row">').attr('data-ai-for', cn);
+        $aiRow.append(
+            $('<td colspan="4">')
+                .css({ paddingLeft: '1.5rem' })
+                .html('<span class="panel-label me-2">AI:</span>')
+                .append($msWrap)
+        );
+        $mainRow.after($aiRow);
+        $btn.closest('td').html('<span class="text-muted" style="font-size:0.75rem">✓ Done</span>');
+    })
+    .fail(function (xhr) {
+        var err = (xhr.responseJSON && xhr.responseJSON.error) || '';
+        var msg = (xhr.status === 503 || err === 'PEAK_DEMAND')
+            ? 'Peak demand — try again later'
+            : 'Analysis failed — try again';
+
+        var $mainRow = $('[data-cn="' + cn + '"]', '#bulk-body');
+        var $errRow  = $('<tr class="bulk-ai-row">').attr('data-ai-for', cn);
+        $errRow.append(
+            $('<td colspan="4">').css({ paddingLeft: '1.5rem' })
+                .html('<span class="text-muted" style="font-size:0.78rem">' + escHtml(msg) + '</span>')
+        );
+        $mainRow.after($errRow);
+        $btn.prop('disabled', false).text('Retry');
+    });
+});
+
+// ── Party / style-of-cause search ────────────────────────────────────────────
+
+function searchParty() {
+    var q = $('#partyNameInput').val().trim();
+    if (!q) return;
+
+    _partyAll = [];
+    $('#case-section, #bulk-section, #party-section, #error-msg').hide();
+    $('#loading').show();
+
+    $.getJSON(PROXY_URL + '?type=soc&q=' + encodeURIComponent(q))
+        .done(function (data) {
+            $('#loading').hide();
+            _partyAll = data.data || [];
+            if (!_partyAll.length) {
+                showError('No cases found matching <strong>' + escHtml(q) + '</strong>.');
+                return;
+            }
+            renderPartyResults();
+            $('#party-section').show();
+        })
+        .fail(function () {
+            $('#loading').hide();
+            showError('Party search is currently unavailable. Please search by court file number instead.');
+        });
+}
+
+function setPartyFilter(filter) {
+    _partyFilter = filter;
+    $('#pf-imm, #pf-all').removeClass('active');
+    $('#pf-' + filter).addClass('active');
+    if (_partyAll.length) renderPartyResults();
+}
+
+function renderPartyResults() {
+    var CAP = 200;
+
+    var filtered = (_partyFilter === 'imm')
+        ? _partyAll.filter(function (c) { return (c.PRCDG_TYPE || '').toUpperCase() === 'IMM'; })
+        : _partyAll;
+
+    var total  = filtered.length;
+    var cases  = filtered.slice(0, CAP);
+    var capped = total > CAP;
+
+    $('#party-count').text(capped ? CAP + ' of ' + total : total);
+
+    if (capped) {
+        $('#party-cap-warn')
+            .text('Showing ' + CAP + ' of ' + total + ' results — refine your search to see more specific results.')
+            .show();
+    } else {
+        $('#party-cap-warn').hide();
+    }
+
+    if ($.fn.DataTable.isDataTable('#party-table')) {
+        $('#party-table').DataTable().destroy();
+    }
+
+    var tbody = $('#party-body').empty();
+
+    if (!cases.length) {
+        tbody.append(
+            '<tr><td colspan="5" class="text-center text-muted py-3" style="font-size:0.85rem">' +
+            'No IMM proceedings found for this name — try switching to <strong>All</strong>.' +
+            '</td></tr>'
+        );
+        return;
+    }
+
+    cases.forEach(function (c) {
+        var cn = c.COURT_NO || '';
+        tbody.append(
+            '<tr>' +
+            '<td style="white-space:nowrap"><a href="?' + encodeURIComponent(cn) + '">' + escHtml(cn) + '</a></td>' +
+            '<td>' + escHtml(c.STYLE_OF_CAUSE || '—') + '</td>' +
+            '<td>' + escHtml(c.ENGLISH_NATURE_DESC || '—') + '</td>' +
+            '<td style="white-space:nowrap">' + escHtml(fmtDate(c.FILE_DT || c.FILING_DATE)) + '</td>' +
+            '<td>' + escHtml(c.ENGLISH_CITY_NAME || c.ENGLISH_OFFICE_NAME || '—') + '</td>' +
+            '</tr>'
+        );
+    });
+
+    $('#party-table').DataTable({
+        order:      [[3, 'desc']],
+        pageLength: 25,
+        autoWidth:  true,
+        lengthMenu: [[25, 50, 100, -1], ['25', '50', '100', 'All']],
+        dom:        '<"d-flex flex-wrap gap-2 align-items-center mb-2"f>rtip',
+        language:   { search: 'Filter:', lengthMenu: 'Show _MENU_' }
+    });
+}
+
+// ── Main render (single file) ────────────────────────────────────────────────
+
+function renderPage(c, re, partiesData) {
+    $('#style-of-cause').text(c.STYLE_OF_CAUSE || '—');
+    $('#court-no').text(c.COURT_NO || '—');
+    $('#nature-desc').text(c.ENGLISH_NATURE_DESC || '—');
+    $('#office').text(c.ENGLISH_CITY_NAME || c.ENGLISH_OFFICE_NAME || '—');
+    $('#filing-date').text(fmtDate(c.FILE_DT || c.FILING_DATE));
+    $('#track').text(c.ENGLISH_TRACK_NAME || c.ENGLISH_PROCEEDING_TYPE || '—');
+
+    renderPartyInfo(partiesData, c.STYLE_OF_CAUSE || '');
+
+    var entries = re.data || [];
+    $('#re-count').text(entries.length);
+
+    loadMilestones(entries);
+
+    if ($.fn.DataTable.isDataTable('#docketTable')) {
+        $('#docketTable').DataTable().destroy();
+    }
+    $('#docket-body').empty();
+
+    entries.sort(function (a, b) { return a.RE_NO - b.RE_NO; });
+
+    entries.forEach(function (e) {
+        var desc = (e.RECORDED_ENTRY || '').trim();
+        if (e.REGISTRY_NOTES_EXTERNAL) desc += '\n' + e.REGISTRY_NOTES_EXTERNAL.trim();
+        if (e.COMMAND_PHRASE_EN)        desc += '\n' + e.COMMAND_PHRASE_EN.trim();
+
+        $('#docket-body').append(
+            '<tr>' +
+            '<td>' + e.RE_NO + '</td>' +
+            '<td style="white-space:nowrap">' + e.DOC_DT.split('T')[0] + '</td>' +
+            '<td><span class="badge-office">' + escHtml(e.ENGLISH_OFFICE_NAME || '—') + '</span></td>' +
+            '<td class="re-entry">' + escHtml(desc) + '</td>' +
+            '</tr>'
+        );
+    });
+
+    $('#docketTable').DataTable({
+        order:      [[0, 'desc']],
+        pageLength: 50,
+        autoWidth:  true,
+        lengthMenu: [[25, 50, 100, -1], ['25', '50', '100', 'All']],
+        dom: '<"d-flex flex-wrap gap-2 align-items-center mb-2"Bf>rtip',
+        buttons: [
+            { extend: 'copy',  text: 'Copy',  className: 'btn btn-sm btn-outline-secondary' },
+            { extend: 'excel', text: 'Excel', className: 'btn btn-sm btn-outline-secondary',
+              title: c.COURT_NO + ' — ' + c.STYLE_OF_CAUSE },
+            { extend: 'print', text: 'Print', className: 'btn btn-sm btn-outline-secondary',
+              title: c.COURT_NO + ' — ' + c.STYLE_OF_CAUSE }
+        ],
+        language: { search: 'Filter:', lengthMenu: 'Show _MENU_' }
+    });
+
+    $('#case-section').show();
+}
+
+// ── Party / counsel ──────────────────────────────────────────────────────────
+
+function renderPartyInfo(partiesData, styleOfCause) {
+    var parties = (partiesData && partiesData.data) ? partiesData.data : [];
+    if (!parties.length) return;
+
+    var socUpper = styleOfCause.toUpperCase();
+    var vIdx     = socUpper.indexOf(' V. ');
+    var socLeft  = (vIdx !== -1) ? socUpper.substring(0, vIdx).trim() : socUpper;
+
+    var govKeywords = ['MCI', 'MPSEP', 'MINISTER', 'ATTORNEY GENERAL', ' AG ', 'CBSA', 'PUBLIC SAFETY', 'SOLICITOR GENERAL'];
+    var applicantIsGov = govKeywords.some(function (k) { return socLeft.includes(k); });
+
+    var govParties = [], individualParties = [];
+    parties.forEach(function (p) {
+        var n = (p.PARTY_NAME || '').toUpperCase();
+        var isGov = n.includes('MINISTER') || n.includes('ATTORNEY GENERAL') ||
+                    n.includes('CBSA') || n.includes('CROWN') ||
+                    n.includes('CANADA BORDER') || n.includes('PUBLIC SAFETY') ||
+                    n.includes('SOLICITOR GENERAL');
+        (isGov ? govParties : individualParties).push(p);
+    });
+
+    var applicantParty  = applicantIsGov ? (govParties[0]        || null) : (individualParties[0] || null);
+    var respondentParty = applicantIsGov ? (individualParties[0] || null) : null;
+
+    if (applicantParty) {
+        $('#applicant-firm').text(applicantParty.SOLCTR_FIRM || '—');
+        $('#applicant-counsel').text(formatCounsel(applicantParty.SOLCTR_CONTACT));
+    }
+
+    if (applicantIsGov && respondentParty) {
+        $('#respondent-firm').text(respondentParty.SOLCTR_FIRM || '—');
+        $('#respondent-counsel').text(formatCounsel(respondentParty.SOLCTR_CONTACT));
+        $('#respondent-info').show();
+    }
+}
+
+function formatCounsel(nameStr) {
+    if (!nameStr || !nameStr.trim()) return '—';
+    var parts = nameStr.split(',');
+    if (parts.length >= 2) {
+        return titleCase(parts[1].trim()) + ' ' + titleCase(parts[0].trim());
+    }
+    return titleCase(nameStr.trim());
+}
+
+function titleCase(str) {
+    return str.toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+}
+
+// ── Single-file milestone panels ─────────────────────────────────────────────
+
+var _currentEntries = [];
+
+function loadMilestones(entries) {
+    _currentEntries = entries || [];
+    var m = detectMilestonesRegex(_currentEntries);
+    renderMilestones(m, '#status-row');
+    // Reset AI panel
+    $('#ai-status-row').empty();
+    $('#ai-analyse-wrap').html('<button id="ai-analyse-btn" class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem;" onclick="triggerAIMilestones()">Analyse</button>');
+}
+
+function triggerAIMilestones() {
+    $('#ai-analyse-wrap').html(
+        '<span class="text-muted" style="font-size:0.78rem">' +
+        '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Analysing…</span>'
+    );
+    $.ajax({
+        url:         PROXY_URL + '?type=milestones',
+        method:      'POST',
+        contentType: 'application/json',
+        data:        JSON.stringify({ entries: _currentEntries }),
+        dataType:    'json',
+        timeout:     60000,
+    })
+    .done(function (m) {
+        $('#ai-analyse-wrap').empty();
+        renderMilestones(m, '#ai-status-row');
+    })
+    .fail(function (xhr) {
+        $('#ai-analyse-wrap').empty();
+        var err = (xhr.responseJSON && xhr.responseJSON.error) || '';
+        if (xhr.status === 503 || err === 'PEAK_DEMAND') {
+            $('#ai-status-row').html('<span class="text-muted" style="font-size:0.78rem">AI analysis unavailable due to peak demand — please try again later</span>');
+        } else {
+            $('#ai-status-row').html('<span class="text-muted" style="font-size:0.78rem">AI analysis failed — please try again later</span>');
+        }
+    });
+}
+
+// ── Regex milestone detection ─────────────────────────────────────────────────
+
+function detectMilestonesRegex(entries) {
+    var m = {
+        perfected:       { found: false, date: null },
+        rmoa:            { found: false, date: null },
+        reply:           { found: false, date: null },
+        stay:            { status: null },
+        motion:          { status: null },
+        pending_leave:   { found: false },
+        ctr:             { status: null, order_date: null, filed_date: null },
+        applicant_fmoa:  { found: false, date: null },
+        respondent_fmoa: { found: false, date: null },
+        jr_scheduled:    { found: false, datetime: null },
+        jr_heard:        { found: false, date: null },
+        jr_decision:     { status: null },
+        leave_dismissed: { found: false, date: null },
+        discontinued:    { found: false, date: null },
+    };
+
+    var sorted = entries.slice().sort(function (a, b) { return a.RE_NO - b.RE_NO; });
+
+    sorted.forEach(function (e) {
+        var t  = (e.RECORDED_ENTRY || '').trim();
+        if (e.REGISTRY_NOTES_EXTERNAL) t += '\n' + e.REGISTRY_NOTES_EXTERNAL.trim();
+        if (e.COMMAND_PHRASE_EN)        t += '\n' + e.COMMAND_PHRASE_EN.trim();
+        var dt = e.DOC_DT ? e.DOC_DT.split('T')[0] : null;
+
+        if (/^\*+\s*(CANCELLED|ANNUL)/i.test(t)) return;
+
+        // Perfected
+        if (!m.perfected.found &&
+            (/applicant'?s record/i.test(t) || /application record/i.test(t)) &&
+            /on behalf of applicant/i.test(t) && /filed on/i.test(t)) {
+            m.perfected = { found: true, date: dt };
+        }
+
+        // RMOA (leave stage only — not Further)
+        if (!m.rmoa.found &&
+            /memorandum of argument on behalf of the respondent/i.test(t) &&
+            !/further memorandum/i.test(t)) {
+            m.rmoa = { found: true, date: dt };
+        }
+
+        // Reply
+        if (!m.reply.found &&
+            (/reply memorandum on behalf of the applicant/i.test(t) ||
+             /\breply on behalf of the applicant/i.test(t))) {
+            m.reply = { found: true, date: dt };
+        }
+
+        // Stay
+        if (/granting the stay of (execution|removal)/i.test(t)) {
+            m.stay.status = 'granted';
+        } else if (/order rendered/i.test(t) && /stay/i.test(t) && /(dismiss|den(ied|y))/i.test(t)) {
+            m.stay.status = 'dismissed';
+        } else if (!m.stay.status && /notice of motion/i.test(t) && /stay of (execution|removal)/i.test(t)) {
+            m.stay.status = 'filed';
+        }
+
+        // Other motions (not stay)
+        if (/notice of motion/i.test(t) && !/stay of (execution|removal)/i.test(t)) {
+            if (!m.motion.status) m.motion.status = 'filed_no_response';
+        } else if (/motion record in response to motion/i.test(t) && m.motion.status === 'filed_no_response') {
+            m.motion.status = 'decision_pending';
+        } else if (/order rendered/i.test(t) && m.motion.status && m.motion.status !== 'decided_or_abandoned' &&
+                   !/stay of (execution|removal)/i.test(t) && !/granting the application for leave/i.test(t)) {
+            m.motion.status = 'decided_or_abandoned';
+        }
+
+        // Pending leave
+        if (/communication to the court from the registry/i.test(t) && /leave disposition/i.test(t)) {
+            m.pending_leave.found = true;
+        }
+
+        // CTR ordered
+        if (!m.ctr.status && /tribunal shall send a certified copy of its record/i.test(t)) {
+            m.ctr.status     = 'ordered';
+            m.ctr.order_date = dt;
+        }
+
+        // CTR filed
+        if (/certified copy of the record sent by/i.test(t) && /pursuant to the order of the court/i.test(t)) {
+            m.ctr.status     = 'filed';
+            m.ctr.filed_date = dt;
+        }
+
+        // JR Scheduled (leave granted + hearing date fixed)
+        if (!m.jr_scheduled.found &&
+            /granting the application for leave/i.test(t) &&
+            /fixing the hearing at a special sitting/i.test(t)) {
+            m.jr_scheduled.found = true;
+            var jrMatch = t.match(/special sitting at (\w+) on (\d{2}-[A-Z]{3}-\d{4}) to begin at (\d{2}:\d{2})/i);
+            if (jrMatch) m.jr_scheduled.datetime = jrMatch[1] + ' ' + jrMatch[2] + ' ' + jrMatch[3];
+            m.pending_leave.found = false;
+        }
+
+        // Leave dismissed
+        if (/order rendered/i.test(t) && /dismiss/i.test(t) && /application for leave/i.test(t)) {
+            m.pending_leave.found = false;
+            m.leave_dismissed = { found: true, date: dt };
+        }
+
+        // Applicant FMOA
+        if (!m.applicant_fmoa.found && /further memorandum of argument on behalf of the applicant/i.test(t)) {
+            m.applicant_fmoa = { found: true, date: dt };
+        }
+
+        // Respondent FMOA
+        if (!m.respondent_fmoa.found && /further memorandum of argument on behalf of the respondent/i.test(t)) {
+            m.respondent_fmoa = { found: true, date: dt };
+        }
+
+        // JR Heard
+        if (!m.jr_heard.found && /before the court:[\s\S]*?judicial review/i.test(t) && /result of hearing:/i.test(t)) {
+            m.jr_heard = { found: true, date: dt };
+        }
+
+        // JR Decision
+        if (/\(final decision\)/i.test(t) && /judicial review/i.test(t)) {
+            if      (/result:\s*granted/i.test(t))   m.jr_decision.status = 'granted';
+            else if (/result:\s*dismissed/i.test(t)) m.jr_decision.status = 'dismissed';
+            m.pending_leave.found = false;
+            if (!m.jr_heard.found) m.jr_heard = { found: true, date: dt };
+        }
+
+        // Discontinued
+        if (!m.discontinued.found && /notice of discontinuance/i.test(t)) {
+            m.discontinued = { found: true, date: dt };
+        }
+    });
+
+    return m;
+}
+
+// ── Milestone rendering ───────────────────────────────────────────────────────
+
+function badge(text, cls) {
+    return '<span class="s-text ' + cls + '">' + escHtml(text) + '</span>';
+}
+
+// target: CSS selector string OR DOM element OR jQuery object
+function renderMilestones(m, target) {
+    var $t    = (typeof target === 'string') ? $(target) : $(target);
+    var html  = '';
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+
+    function dateStr(d) { return d ? d.split('T')[0] : ''; }
+
+    function addDays(ds, n) {
+        var d = new Date(ds);
+        d.setDate(d.getDate() + n);
+        return d;
+    }
+
+    // Perfected
+    if (m.perfected && m.perfected.found) {
+        html += badge('PERFECTED ' + dateStr(m.perfected.date), 's-green');
+    }
+
+    // RMOA
+    if (m.rmoa && m.rmoa.found) {
+        html += badge('RMOA FILED ' + dateStr(m.rmoa.date), 's-green');
+    } else if (m.perfected && m.perfected.found && m.perfected.date) {
+        var rmoaDue    = addDays(m.perfected.date, 30);
+        var rmoaDueStr = rmoaDue.toISOString().split('T')[0];
+        html += badge('RMOA DUE ' + rmoaDueStr, rmoaDue < today ? 's-red' : 's-amber');
+    }
+
+    // Reply
+    if (m.reply && m.reply.found) {
+        html += badge('REPLY FILED' + (m.reply.date ? ' ' + dateStr(m.reply.date) : ''), 's-green');
+    }
+
+    // Stay
+    if (m.stay && m.stay.status) {
+        var stayMap = {
+            filed:     ['STAY FILED',     's-amber'],
+            granted:   ['STAY GRANTED',   's-green'],
+            dismissed: ['STAY DISMISSED', 's-red'],
+        };
+        var sc = stayMap[m.stay.status];
+        if (sc) html += badge(sc[0], sc[1]);
+    }
+
+    // Other motion
+    if (m.motion && m.motion.status) {
+        var motionMap = {
+            filed_no_response:    ['MOTION FILED',   's-amber'],
+            decision_pending:     ['MOTION PENDING', 's-amber'],
+            decided_or_abandoned: ['MOTION DECIDED', 's-neutral'],
+        };
+        var mc = motionMap[m.motion.status];
+        if (mc) html += badge(mc[0], mc[1]);
+    }
+
+    // Pending leave — With Court
+    if (m.pending_leave && m.pending_leave.found) {
+        html += badge('WITH COURT', 's-gray');
+    }
+
+    // Leave dismissed
+    if (m.leave_dismissed && m.leave_dismissed.found) {
+        html += badge('LEAVE DISMISSED' + (m.leave_dismissed.date ? ' ' + dateStr(m.leave_dismissed.date) : ''), 's-red');
+    }
+
+    // CTR
+    if (m.ctr && m.ctr.status) {
+        if (m.ctr.status === 'filed') {
+            html += badge('CTR FILED' + (m.ctr.filed_date ? ' ' + dateStr(m.ctr.filed_date) : ''), 's-green');
+        } else if (m.ctr.status === 'ordered') {
+            if (m.ctr.order_date) {
+                var ctrDue    = addDays(m.ctr.order_date, 21);
+                var ctrDueStr = ctrDue.toISOString().split('T')[0];
+                html += badge('CTR DUE ' + ctrDueStr, ctrDue < today ? 's-red' : 's-amber');
+            } else {
+                html += badge('CTR ORDERED', 's-amber');
+            }
+        }
+    }
+
+    // Applicant FMOA
+    if (m.applicant_fmoa && m.applicant_fmoa.found) {
+        html += badge('APPLICANT FMOA' + (m.applicant_fmoa.date ? ' ' + dateStr(m.applicant_fmoa.date) : ''), 's-green');
+    }
+
+    // Respondent FMOA
+    if (m.respondent_fmoa && m.respondent_fmoa.found) {
+        html += badge('RESPONDENT FMOA' + (m.respondent_fmoa.date ? ' ' + dateStr(m.respondent_fmoa.date) : ''), 's-green');
+    }
+
+    // JR Scheduled — suppress once hearing has occurred
+    if (m.jr_scheduled && m.jr_scheduled.found && !(m.jr_heard && m.jr_heard.found)) {
+        var jrDt = m.jr_scheduled.datetime || '';
+        html += badge('JR SCHEDULED' + (jrDt ? ' ' + jrDt.split('T')[0] : ''), 's-red');
+    }
+
+    // JR Heard with result folded in
+    if (m.jr_heard && m.jr_heard.found) {
+        var heardLabel = 'JR HEARD' + (m.jr_heard.date ? ' ' + dateStr(m.jr_heard.date) : '');
+        var result = m.jr_decision && m.jr_decision.status;
+        if      (result === 'granted')   html += badge(heardLabel + ' — GRANTED',   's-green');
+        else if (result === 'dismissed') html += badge(heardLabel + ' — DISMISSED', 's-red');
+        else                             html += badge(heardLabel, 's-neutral');
+    }
+
+    // Discontinued
+    if (m.discontinued && m.discontinued.found) {
+        html += badge('DISCONTINUED' + (m.discontinued.date ? ' ' + dateStr(m.discontinued.date) : ''), 's-green');
+    }
+
+    if (!html) {
+        html = '<span class="text-muted" style="font-size:0.78rem">No milestones detected yet</span>';
+    }
+
+    $t.html(html);
+}
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+
+function fmtDate(d) {
+    if (!d) return '—';
+    if (typeof d === 'string' && d.indexOf('/Date(') === 0) {
+        var ms = parseInt(d.replace('/Date(', '').replace(')/', ''), 10);
+        d = new Date(ms).toISOString();
+    }
+    return d.split('T')[0];
+}
+
+function showError(html) { $('#error-msg').html(html).show(); }
+function escHtml(s)      { return $('<div>').text(s).html(); }
+</script>
+</body>
+</html>
