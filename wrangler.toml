@@ -1,4 +1,5 @@
 name = "docket-proxy"
+compatibility_date = "2026-06-03"
 type = "javascript"
 account_id = "660f6fb4bd0db8c8821df738c7eda7f1"
 workers_dev = true
