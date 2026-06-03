@@ -116,14 +116,21 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // Origin check — reject anything not coming from an allowed origin
+    const url  = new URL(request.url);
+    const type = url.searchParams.get('type') || '';
+
+    // Page navigation (no ?type=) — static assets at /docketviewer.html are served
+    // by the platform before the Worker runs; a bare "/" lands here, so redirect it.
+    if (!type) {
+      return Response.redirect(url.origin + '/docketviewer.html', 302);
+    }
+
+    // Origin check — reject API requests not coming from an allowed origin
     if (!allowedOrigin) {
       return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
     }
 
     const clientIp = request.headers.get('CF-Connecting-IP') || 'unknown';
-    const url      = new URL(request.url);
-    const type     = url.searchParams.get('type') || '';
 
     // ── Config endpoint (no origin check needed — public) ──────────────────────
     if (type === 'config') {
