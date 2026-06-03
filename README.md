@@ -12,24 +12,25 @@ A fast, AI-enhanced web tool for exploring Canadian Federal Court dockets. Searc
 
 ### Local Development
 
-This is a static HTML file with no build step required.
+The frontend lives in `public/docketviewer.html` and the API in `worker.js`.
+Run both together with Wrangler:
 
 ```bash
 # Clone the repo
 git clone https://github.com/yourusername/DocketViewer.git
 cd DocketViewer
 
-# Serve locally (pick one)
-python -m http.server 8000              # Python
-npx http-server                         # Node.js
-# Or just open docketviewer.html in your browser
+# Install wrangler and run the worker (serves HTML + API)
+npm install -D wrangler
+wrangler dev --env=development
 ```
 
-Then visit `http://localhost:8000` (or open the file directly).
+Then visit `http://localhost:8787/docketviewer.html`.
 
 ### Deploy to Cloudflare
 
-This tool is designed for free-tier Cloudflare (Pages + Workers):
+DocketViewer runs as a **single Cloudflare Worker** that serves both the HTML and
+the API. The Worker is connected to GitHub, so every push to `main` auto-deploys.
 
 1. **Push to GitHub**
    ```bash
@@ -38,52 +39,36 @@ This tool is designed for free-tier Cloudflare (Pages + Workers):
    git push origin main
    ```
 
-2. **Follow [DEPLOYMENT.md](./DEPLOYMENT.md)** for step-by-step Cloudflare setup
-   - Worker for API proxying + AI
-   - Pages for static hosting
-   - Environment variables for origins & Gemini key
+2. **Follow [DEPLOYMENT.md](./DEPLOYMENT.md)** for the full Cloudflare setup
+   (custom domain, `ALLOWED_ORIGINS`, and the `GEMINI_API_KEY` secret).
 
 ## Architecture
 
 ```
-┌─ Cloudflare Pages (Frontend)
-│  └─ docketviewer.html (static, auto-deployed from main branch)
-│
-└─ Cloudflare Worker (Backend)
-   ├─ API proxy (Federal Court endpoints)
-   ├─ CORS check (allowed origins from ALLOWED_ORIGINS env var)
-   └─ AI milestone analysis (Gemini API)
+docketviewer.grantonlaw.ca → docketviewer (single Worker)
+   ├─ static assets  → public/docketviewer.html
+   └─ API (?type=…)  → worker.js
+        ├─ Federal Court proxy (case / re / parties / soc)
+        ├─ Origin check (ALLOWED_ORIGINS)
+        └─ AI milestone analysis (Gemini API)
 ```
+
+One Worker, git-connected: a commit deploys the HTML and the API together. No
+separate Pages project and no proxy hop.
 
 ## Configuration
 
-### Environment Variables
+- **`ALLOWED_ORIGINS`** — set in `wrangler.toml` under `[vars]`. Comma-separated
+  list of domains allowed to call the API (no trailing slashes). Lives in the
+  config file so it survives every deploy.
+  Example: `https://docketviewer.grantonlaw.ca`
 
-Set these in Cloudflare Worker Settings:
+- **`GEMINI_API_KEY`** — a [Google Gemini API key](https://aistudio.google.com/app/apikey),
+  set once as a secret: `wrangler secret put GEMINI_API_KEY`. **Never commit it.**
+  Secrets survive every deploy.
 
-- **`ALLOWED_ORIGINS`** (variable)  
-  Comma-separated list of allowed frontend domains (no trailing slashes).  
-  Example: `https://docketviewer.example.com,https://staging.example.com`
-
-- **`GEMINI_API_KEY`** (secret)  
-  Your [Google Gemini API key](https://aistudio.google.com/app/apikey).  
-  **Keep this private** — never commit to git.
-
-### Local Development with Wrangler
-
-To test the worker locally:
-
-```bash
-# Install wrangler
-npm install -D wrangler
-
-# Edit wrangler.toml — set your account_id and adjust ALLOWED_ORIGINS for localhost
-# Then:
-
-wrangler dev
-
-# Worker is now at http://localhost:8787
-```
+> Don't set these as plaintext dashboard variables — `wrangler deploy` overwrites
+> dashboard variables from `wrangler.toml` on every deploy.
 
 ## Usage
 

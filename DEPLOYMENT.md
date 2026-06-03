@@ -1,127 +1,131 @@
 # Deployment Guide — DocketViewer
 
-This guide covers deploying DocketViewer to Cloudflare (Pages + Workers).
+DocketViewer runs as a **single Cloudflare Worker** that serves both the static
+HTML and the API. There is no separate Pages project and no proxy hop.
+
+```
+docketviewer.grantonlaw.ca  →  docketviewer (Worker)
+                                ├─ static assets  → ./public/docketviewer.html
+                                └─ API (?type=…)  → worker.js
+                                     ├─ Federal Court proxy
+                                     └─ Gemini milestone analysis
+```
+
+The Worker is connected to GitHub, so **every push to `main` auto-deploys** both
+the HTML and the API together.
 
 ## Prerequisites
 
 - Cloudflare account
-- `wrangler` CLI installed (`npm install -g wrangler`)
-- GitHub repo created and pushed
+- `wrangler` CLI (`npm install -g wrangler`)
+- GitHub repo connected to the Worker
 
-## Setup Steps
+## Project layout
 
-### 1. Set Up Cloudflare Worker (Proxy Backend)
+| Path | Purpose |
+|------|---------|
+| `worker.js` | The Worker — API proxy, origin check, Gemini analysis |
+| `public/docketviewer.html` | The frontend (served as a static asset) |
+| `wrangler.toml` | Worker config, asset binding, `ALLOWED_ORIGINS` |
 
-The worker handles API proxying and AI milestone analysis. It requires two environment variables:
+> Only files inside `public/` are served as static assets. `worker.js` lives at
+> the repo root so it is never exposed as a downloadable file.
 
-**`ALLOWED_ORIGINS`** (variable)
-- Comma-separated list of URLs allowed to call your worker
-- Example: `https://docketviewer.example.com,https://staging.example.com`
-- Set this **before** deploying
+## Configuration
 
-**`GEMINI_API_KEY`** (secret)
-- Get from [Google AI Studio](https://aistudio.google.com/app/apikey)
-- This is a secret and should never be committed to git
+### Variables (in `wrangler.toml` — survive every deploy)
 
-#### Option A: Deploy via Cloudflare Dashboard
+**`ALLOWED_ORIGINS`** — comma-separated list of domains allowed to call the API.
+Page loads are served from the same origin, so this only needs your live
+domain(s):
 
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create application** → **Create a Worker**
-2. Name it `docket-proxy`
-3. Copy `worker.js` code into the editor
-4. Click **Save and deploy**
-5. Go to **Settings** → **Variables and Secrets**
-   - Add **Variable**: `ALLOWED_ORIGINS` = `https://your-domain.com` (comma-separated if multiple)
-   - Add **Secret**: `GEMINI_API_KEY` = your Google API key
-6. Note your worker URL (e.g., `https://docket-proxy.your-account.workers.dev`)
-
-#### Option B: Deploy via `wrangler` CLI
-
-```bash
-# 1. Authenticate
-wrangler login
-
-# 2. Update wrangler.toml with your account info
-#    - Set your ACCOUNT_ID
-#    - Update ALLOWED_ORIGINS as needed
-
-# 3. Set secrets (interactive)
-wrangler secret put GEMINI_API_KEY --env production
-
-# 4. Deploy
-wrangler deploy --env production
+```toml
+[vars]
+ALLOWED_ORIGINS = "https://docketviewer.grantonlaw.ca"
 ```
 
-### 2. Set Up Cloudflare Pages (Frontend)
+### Secrets (set once via wrangler — survive every deploy)
 
-Cloudflare Pages hosts your HTML/JS frontend and auto-deploys on push.
+**`GEMINI_API_KEY`** — Google Gemini key for AI milestone analysis. Never commit
+it. Set it once:
 
-1. Go to **Cloudflare Dashboard** → **Workers & Pages** → **Create application** → **Pages** → **Connect to Git**
-2. Select your GitHub repo
-3. Configure build settings:
-   - **Framework preset**: None
-   - **Build command**: (leave blank)
-   - **Build output directory**: `/` (root, since it's a single HTML file)
-4. Click **Save and deploy**
-5. Note your Pages URL (e.g., `https://docketviewer.pages.dev`)
+```bash
+wrangler secret put GEMINI_API_KEY
+```
 
-### 3. Update `ALLOWED_ORIGINS` in Worker
+Get a key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
-Update your worker's `ALLOWED_ORIGINS` to include your Pages domain:
+> Because `ALLOWED_ORIGINS` lives in `wrangler.toml` and `GEMINI_API_KEY` is a
+> secret, neither is wiped when the Worker redeploys. Do **not** set them as
+> plaintext dashboard variables — those get overwritten on every deploy.
 
-1. Go to **Workers & Pages** → **docket-proxy** → **Settings** → **Variables and Secrets**
-2. Edit `ALLOWED_ORIGINS` to include both your Pages domain and any custom domains:
-   ```
-   https://docketviewer.pages.dev,https://docketviewer.example.com
-   ```
+## Deploy
 
-### 4. Custom Domain (Optional)
+### Automatic (normal workflow)
 
-Cloudflare Pages domains are fine for development. To use your own domain:
+Push to `main`. The connected Worker rebuilds and deploys both the HTML and the
+API. The build command in the Cloudflare dashboard should be:
 
-1. Go to **Pages project** → **Custom domains** → **Add custom domain**
-2. Follow the CNAME setup (Cloudflare will guide you)
-3. Update `ALLOWED_ORIGINS` in worker if needed
+```
+npx wrangler deploy
+```
 
----
+### Manual
 
-## How It Works
+```bash
+wrangler deploy
+```
 
-1. **User loads `docketviewer.html`** on Cloudflare Pages
-2. **Page fetches config** from worker (`/?type=config`) to discover proxy URL
-3. **All API calls** (case data, docket entries, AI analysis) go through worker to `/docket-proxy`
-4. **Worker checks `Origin` header** against `ALLOWED_ORIGINS` — rejects if not allowed
-5. **Worker proxies** requests to Federal Court API or Gemini API
+The "multiple environments" warning is harmless — `wrangler deploy` targets the
+top-level (production) config. The `[env.development]` block is only used by
+`wrangler dev`.
 
----
+## Local development
 
-## Environment Variables Quick Reference
+```bash
+wrangler dev --env=development
+```
 
-| Variable | Type | Where | Purpose |
-|----------|------|-------|---------|
-| `ALLOWED_ORIGINS` | Variable | Worker Settings | Comma-separated list of domains allowed to call your worker |
-| `GEMINI_API_KEY` | Secret | Worker Settings | Google Gemini API key for AI milestone analysis |
+Serves the Worker (HTML + API) at `http://localhost:8787` with localhost origins
+allowed.
 
----
+## Custom domain
+
+The custom domain is attached directly to the Worker:
+
+1. Cloudflare Dashboard → **Workers & Pages** → `docketviewer` → **Settings → Domains & Routes**
+2. Add `docketviewer.grantonlaw.ca`
+
+## How it works
+
+1. **Page load** (`/docketviewer.html`) — Cloudflare serves the static asset
+   directly, before the Worker runs. A bare `/` is redirected to
+   `/docketviewer.html` by the Worker.
+2. **Frontend fetches config** (`/?type=config`) from the same origin to learn
+   the proxy URL (itself).
+3. **API calls** (`/?type=case`, `re`, `parties`, `soc`, `milestones`) hit the
+   Worker. The Worker checks the `Origin`/`Referer` against `ALLOWED_ORIGINS`.
+4. **Worker proxies** to the Federal Court API or Gemini and returns the result.
 
 ## Troubleshooting
 
-### "Forbidden" errors
-- Check `ALLOWED_ORIGINS` includes your current domain
-- Clear browser cache and retry
+### "Forbidden" on API calls
+- `ALLOWED_ORIGINS` in `wrangler.toml` must exactly match your live origin,
+  including `https://` and no trailing slash.
+- Redeploy after changing it (the value is baked in at deploy time).
 
-### Config endpoint returns empty
-- Verify worker is deployed and accessible
-- Check worker logs in Cloudflare Dashboard
+### "Forbidden" on page load
+- Means a request reached the Worker without an allowed origin. Confirm the
+  static asset exists at `public/docketviewer.html` and the `[assets]` block
+  points at `./public`.
 
 ### AI analysis unavailable
-- Verify `GEMINI_API_KEY` is set as a **Secret** (not a variable)
-- Check Google Cloud API quota isn't exceeded
-- Ensure Gemini API is enabled in your Google Cloud project
+- Confirm `GEMINI_API_KEY` is set as a **secret** (`wrangler secret list`).
+- Check the Gemini API quota and that the model name in `worker.js` is valid.
 
----
+## Environment Variables Quick Reference
 
-## Next Steps
-
-- Set up a custom domain
-- Add branch protection (deploy from `main` only)
-- Monitor worker analytics and errors in Cloudflare Dashboard
+| Name | Type | Where | Purpose |
+|------|------|-------|---------|
+| `ALLOWED_ORIGINS` | Variable | `wrangler.toml` `[vars]` | Domains allowed to call the API |
+| `GEMINI_API_KEY` | Secret | `wrangler secret put` | Google Gemini key for AI analysis |

@@ -317,6 +317,45 @@ var _bulkEntries  = {};        // court number → RE entries[], for bulk AI
 var _partyAll     = [];        // full party search results (unfiltered)
 var _partyFilter  = 'imm';    // 'imm' | 'all'
 
+// Federal Court statutory holidays (2026–2027). A deadline that lands on a
+// weekend or one of these dates rolls forward to the next business day.
+var FC_HOLIDAYS = new Set([
+    // 2026
+    '2026-01-01',  // New Year's Day
+    '2026-04-03',  // Good Friday
+    '2026-04-06',  // Easter Monday
+    '2026-05-18',  // Victoria Day
+    '2026-07-01',  // Canada Day
+    '2026-08-03',  // Civic Holiday (Ontario)
+    '2026-09-07',  // Labour Day
+    '2026-09-30',  // National Day for Truth and Reconciliation
+    '2026-10-12',  // Thanksgiving Day
+    '2026-11-11',  // Remembrance Day
+    '2026-12-25',  // Christmas Day
+    '2026-12-26',  // Boxing Day
+    // 2027
+    '2027-01-01',  // New Year's Day
+    '2027-03-26',  // Good Friday
+    '2027-03-29',  // Easter Monday
+    '2027-05-24',  // Victoria Day
+    '2027-07-01',  // Canada Day
+    '2027-08-02',  // Civic Holiday (Ontario)
+    '2027-09-06',  // Labour Day
+    '2027-09-30',  // National Day for Truth and Reconciliation
+    '2027-10-11',  // Thanksgiving Day
+    '2027-11-11',  // Remembrance Day
+    '2027-12-25',  // Christmas Day
+    '2027-12-26',  // Boxing Day
+]);
+
+// Roll a Date (UTC) forward past Saturdays, Sundays, and FC_HOLIDAYS.
+function rollToBusinessDay(d) {
+    while (d.getUTCDay() === 0 || d.getUTCDay() === 6 || FC_HOLIDAYS.has(d.toISOString().split('T')[0])) {
+        d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return d;
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 $(document).ready(function () {
@@ -875,30 +914,59 @@ function detectMilestonesRegex(entries) {
             m.pending_leave.found = true;
         }
 
-        // CTR ordered
-        if (!m.ctr.status && /tribunal shall send a certified copy of its record/i.test(t)) {
+        // CTR ordered — the order directing the tribunal to produce its record (a
+        // "Production Order" in FC parlance). Match the operative wording (singular or
+        // plural, with the optional "a") OR an explicit Production Order — but not a
+        // motion or letter *requesting* one.
+        if (!m.ctr.status &&
+            (/tribunal shall send (a )?certified cop(y|ies) of its record/i.test(t) ||
+             (/\bproduction order\b/i.test(t) && !/motion|requesting|request for/i.test(t)))) {
             m.ctr.status     = 'ordered';
             m.ctr.order_date = dt;
         }
 
-        // CTR filed
-        if (/certified copy of the record sent by/i.test(t) && /pursuant to the order of the court/i.test(t)) {
+        // CTR filed — "Certified copy of the record sent by ... pursuant to the order of
+        // the Court". RAD/RPD (refugee) files insert "and audio files" before "sent by",
+        // so allow an optional clause between "record" and "sent by".
+        if (/certified copy of the record(?: and [\w ]+?)? sent by/i.test(t) &&
+            /pursuant to the order of the court/i.test(t)) {
             m.ctr.status     = 'filed';
             m.ctr.filed_date = dt;
         }
 
-        // JR Scheduled (leave granted + hearing date fixed)
-        if (!m.jr_scheduled.found &&
-            /granting the application for leave/i.test(t) &&
-            /fixing the hearing at a special sitting/i.test(t)) {
+        // JR Scheduled (leave granted + hearing date fixed). Two docket formats:
+        //   Old:  "granting the application for leave fixing the hearing at a Special Sitting
+        //          at <city> on <DD-MON-YYYY> to begin at <HH:MM>"
+        //   New (2026): "Result - Leave granted, Judicial Review scheduled ... on <Weekday>,
+        //          <Month> <D>, <YYYY>, to commence at <time>"
+        var jrOld = /granting the application for leave/i.test(t) &&
+                    /fixing the hearing at a special sitting/i.test(t);
+        var jrNew = /leave granted,?\s*judicial review scheduled/i.test(t);
+        if (!m.jr_scheduled.found && (jrOld || jrNew)) {
             m.jr_scheduled.found = true;
-            var jrMatch = t.match(/special sitting at (\w+) on (\d{2}-[A-Z]{3}-\d{4}) to begin at (\d{2}:\d{2})/i);
-            if (jrMatch) m.jr_scheduled.datetime = jrMatch[1] + ' ' + jrMatch[2] + ' ' + jrMatch[3];
+            var jrOldMatch = t.match(/special sitting at ([A-Za-zÀ-ÿ.'() -]+?) on (\d{1,2}-[A-Z]{3}-\d{4}) to begin at (\d{1,2}:\d{2})/i);
+            var jrNewMatch = t.match(/on ([A-Z][a-z]+day,\s*[A-Z][a-z]+\s+\d{1,2},\s*\d{4}),?\s*to commence at\s*([\d:]+\s*(?:[ap]\.?m\.?)?)/i);
+            if      (jrOldMatch) m.jr_scheduled.datetime = jrOldMatch[1].trim() + ' ' + jrOldMatch[2] + ' ' + jrOldMatch[3];
+            else if (jrNewMatch) m.jr_scheduled.datetime = jrNewMatch[1].trim() + ' ' + jrNewMatch[2].trim();
             m.pending_leave.found = false;
         }
 
-        // Leave dismissed
-        if (/order rendered/i.test(t) && /dismiss/i.test(t) && /application for leave/i.test(t)) {
+        // JR rescheduled — "Order (time and place) ... rescheduling Judicial Review ... now
+        // to be heard at Special Sitting in <city> on <DD-MON-YYYY> to begin at <HH:MM>".
+        // Entries are processed chronologically, so the latest reschedule wins.
+        if (/reschedul/i.test(t) && /judicial review/i.test(t) && /now to be heard/i.test(t)) {
+            var jrReMatch = t.match(/now to be heard at .*?sitting (?:at|in) ([A-Za-zÀ-ÿ.'() -]+?) on (\d{1,2}-[A-Z]{3}-\d{4})(?: to begin at (\d{1,2}:\d{2}))?/i);
+            if (jrReMatch) {
+                m.jr_scheduled.found    = true;
+                m.jr_scheduled.datetime = jrReMatch[1].trim() + ' ' + jrReMatch[2] + (jrReMatch[3] ? ' ' + jrReMatch[3] : '');
+                m.pending_leave.found   = false;
+            }
+        }
+
+        // Leave dismissed — old: "Order rendered ... dismissing the application for leave";
+        // new (2026): "Order (Final) dated ... Result - Leave dismissed".
+        if ((/order rendered/i.test(t) && /dismiss/i.test(t) && /application for leave/i.test(t)) ||
+            /result\s*[-:–—]\s*leave dismissed/i.test(t)) {
             m.pending_leave.found = false;
             m.leave_dismissed = { found: true, date: dt };
         }
@@ -950,8 +1018,8 @@ function renderMilestones(m, target) {
     function dateStr(d) { return d ? d.split('T')[0] : ''; }
 
     function addDays(ds, n) {
-        var d = new Date(ds);
-        d.setDate(d.getDate() + n);
+        var d = new Date(ds);          // YYYY-MM-DD parses as UTC midnight
+        d.setUTCDate(d.getUTCDate() + n);
         return d;
     }
 
@@ -964,7 +1032,7 @@ function renderMilestones(m, target) {
     if (m.rmoa && m.rmoa.found) {
         html += badge('RMOA FILED ' + dateStr(m.rmoa.date), 's-green');
     } else if (m.perfected && m.perfected.found && m.perfected.date) {
-        var rmoaDue    = addDays(m.perfected.date, 30);
+        var rmoaDue    = rollToBusinessDay(addDays(m.perfected.date, 30));
         var rmoaDueStr = rmoaDue.toISOString().split('T')[0];
         html += badge('RMOA DUE ' + rmoaDueStr, rmoaDue < today ? 's-red' : 's-amber');
     }

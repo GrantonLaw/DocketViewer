@@ -1,9 +1,11 @@
 /**
  * Cloudflare Worker — Federal Court Docket Proxy + Milestone Analysis
  *
- * Environment Variables (set in Cloudflare dashboard → Worker → Settings → Variables):
- *   ALLOWED_ORIGINS      (string, comma-separated)
- *   GEMINI_API_KEY       (secret)
+ * Single Worker: serves the static frontend (public/docketviewer.html) and the API.
+ *
+ * Config:
+ *   ALLOWED_ORIGINS  (string, comma-separated)  — set in wrangler.toml [vars]
+ *   GEMINI_API_KEY   (secret)                    — wrangler secret put GEMINI_API_KEY
  *
  * Endpoints:
  *   GET  /?type=case&courtnumber=IMM-12345-25
@@ -58,7 +60,7 @@ applicant_fmoa — After leave is granted, the applicant files a Further Memoran
 
 respondent_fmoa — After leave is granted, the respondent files a Further Memorandum of Argument for the judicial review hearing on the merits.
 
-jr_scheduled — Leave has been granted and a hearing date has been set for the judicial review on the merits. Extract the city and hearing date/time if available.
+jr_scheduled — Leave has been granted and a hearing date has been set for the judicial review on the merits. Extract the city and hearing date/time if available. If the hearing was later rescheduled or adjourned to a new date (e.g. an "Order (time and place)" rescheduling the judicial review, "now to be heard" on a new date), use the MOST RECENT scheduled hearing date.
 
 jr_heard — The judicial review hearing on the merits has actually taken place.
 
