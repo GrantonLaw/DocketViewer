@@ -201,7 +201,7 @@ export default {
         + '&courtnumber=' + encodeURIComponent(courtnumber);
     } else if (type === 're') {
       apiUrl = 'https://www.fct-cf.ca/CourtFilesAndDecisions/proceedingQueriesRE'
-        + '?division=' + encodeURIComponent(courtnumber)
+        + '?division=' + encodeURIComponent(division)
         + '&courtnumber=' + encodeURIComponent(courtnumber);
     } else if (type === 'parties') {
       apiUrl = 'https://www.fct-cf.ca/CourtFilesAndDecisions/PublicPartiesListInfo'
