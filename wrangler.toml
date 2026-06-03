@@ -1,17 +1,16 @@
-name = "docketviewer"
+name = "docket-proxy"
 compatibility_date = "2026-06-03"
 main = "worker.js"
 account_id = "660f6fb4bd0db8c8821df738c7eda7f1"
 workers_dev = true
 
-[assets]
-directory = "./"
+# Production origins — deployed with: wrangler deploy
+[vars]
+ALLOWED_ORIGINS = "https://docketviewer.grantonlaw.ca"
 
-[env.production]
-vars = { ALLOWED_ORIGINS = "https://docketviewer.grantonlaw.ca" }
-
+# Local dev origins — run with: wrangler dev --env=development
 [env.development]
 vars = { ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:8000,http://localhost:5173" }
 
 # Secrets — set once, persist across deploys:
-#   wrangler secret put GEMINI_API_KEY --env production
+#   wrangler secret put GEMINI_API_KEY
