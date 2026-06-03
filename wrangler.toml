@@ -1,19 +1,17 @@
 name = "docketviewer"
 compatibility_date = "2026-06-03"
-type = "javascript"
+main = "worker.js"
 account_id = "660f6fb4bd0db8c8821df738c7eda7f1"
 workers_dev = true
-route = ""
-zone_id = ""
-main = "worker.js"
 
 [assets]
 directory = "./"
 
-# Local development environment variables
+[env.production]
+vars = { ALLOWED_ORIGINS = "https://docketviewer.grantonlaw.ca" }
+
 [env.development]
 vars = { ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:8000,http://localhost:5173" }
 
-
-# Secrets (set separately in Cloudflare dashboard or via `wrangler secret put`)
-# wrangler secret put GEMINI_API_KEY --env production
+# Secrets — set once, persist across deploys:
+#   wrangler secret put GEMINI_API_KEY --env production
