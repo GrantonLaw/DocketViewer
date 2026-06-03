@@ -7,6 +7,9 @@ route = ""
 zone_id = ""
 main = "worker.js"
 
+[assets]
+directory = "./"
+
 # Local development environment variables
 [env.development]
 vars = { ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:8000,http://localhost:5173" }

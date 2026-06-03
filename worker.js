@@ -116,14 +116,19 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // Origin check — reject anything not coming from an allowed origin
-    if (!allowedOrigin) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
-    }
-
     const clientIp = request.headers.get('CF-Connecting-IP') || 'unknown';
     const url      = new URL(request.url);
     const type     = url.searchParams.get('type') || '';
+
+    // No type param — not an API request, fall through to static assets
+    if (!type) {
+      return env.ASSETS.fetch(request);
+    }
+
+    // Origin check — reject API requests not coming from an allowed origin
+    if (!allowedOrigin) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+    }
 
     // ── Config endpoint (no origin check needed — public) ──────────────────────
     if (type === 'config') {
