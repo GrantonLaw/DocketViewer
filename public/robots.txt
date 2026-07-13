@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /*?type=
+
+Sitemap: https://docketviewer.grantonlaw.ca/sitemap.xml
