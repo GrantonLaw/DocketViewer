@@ -143,11 +143,18 @@
                     onclick="setSearchMode('party')">Party Search</button>
         </div>
         <!-- Court file number input -->
-        <div class="input-group input-group-sm" id="input-file" style="max-width:460px">
-            <input type="text" id="courtNumberInput" class="form-control"
-                   placeholder="IMM-12345-25  (comma-separated for bulk)"
-                   onkeydown="if(event.key==='Enter') loadDocket()">
-            <button class="btn btn-primary" onclick="loadDocket()">Search</button>
+        <div class="d-flex align-items-center gap-1" id="input-file">
+            <div class="input-group input-group-sm" style="max-width:460px">
+                <input type="text" id="courtNumberInput" class="form-control"
+                       placeholder="IMM-12345-25  (comma-separated for bulk)"
+                       onkeydown="if(event.key==='Enter') loadDocket()">
+                <button class="btn btn-primary" onclick="loadDocket()">Search</button>
+            </div>
+            <input type="file" id="bulkFileInput" accept=".csv,.xlsx,.xls" style="display:none"
+                   onchange="handleFileUpload(this.files[0])">
+            <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem"
+                    title="Upload a CSV or Excel file listing court file numbers"
+                    onclick="document.getElementById('bulkFileInput').click()">Upload List</button>
         </div>
         <!-- Party name input -->
         <div class="input-group input-group-sm" id="input-party" style="max-width:460px; display:none">
@@ -276,6 +283,10 @@
             <h6 class="mb-0">Bulk Docket Search</h6>
             <span class="badge bg-secondary" id="bulk-count">0</span>
             <span class="text-muted" style="font-size:0.78rem">— click a file number to open the full docket</span>
+            <div class="ms-auto d-flex gap-1">
+                <button class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem" onclick="exportBulkTable('csv')">Export CSV</button>
+                <button class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem" onclick="exportBulkTable('xlsx')">Export Excel</button>
+            </div>
         </div>
         <div class="table-responsive">
             <table class="table table-sm table-bordered" id="bulk-table" style="width:100%">
@@ -349,6 +360,7 @@
 <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.bootstrap5.min.js"></script>
 <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
 <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.print.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <script>
 // Configuration — will be loaded from worker config endpoint
@@ -469,7 +481,7 @@ function loadDocket(courtNumber) {
         return;
     }
 
-    history.replaceState(null, '', '?' + encodeURIComponent(courtNumber));
+    try { history.replaceState(null, '', '?' + encodeURIComponent(courtNumber)); } catch (err) {}
     document.title = courtNumber + ' — Docket Viewer';
 
     $('#loading').show();
@@ -507,6 +519,50 @@ function loadDocket(courtNumber) {
 
 // ── Bulk search ───────────────────────────────────────────────────────────────
 
+// Extracts court file numbers (e.g. IMM-12345-25) from any cell text in an uploaded CSV/Excel file
+function handleFileUpload(file) {
+    if (!file) return;
+
+    var reader = new FileReader();
+    reader.onload = function (e) {
+        var numbers;
+        try {
+            var wb = XLSX.read(e.target.result, { type: 'array' });
+            numbers = [];
+
+            wb.SheetNames.forEach(function (sheetName) {
+                var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
+                rows.forEach(function (row) {
+                    row.forEach(function (cell) {
+                        var text = String(cell || '').trim().toUpperCase();
+                        if (!text) return;
+                        var matches = text.match(/\b[A-Z0-9]+-[0-9]+-[0-9]{2,4}\b/g);
+                        if (matches) numbers = numbers.concat(matches);
+                    });
+                });
+            });
+
+            numbers = Array.from(new Set(numbers)); // de-dupe, keep order
+        } catch (err) {
+            showError('Could not read the uploaded file. Please upload a valid CSV or Excel file.');
+            return;
+        }
+
+        if (!numbers.length) {
+            showError('No valid court file numbers were found in the uploaded file.');
+            return;
+        }
+
+        var joined = numbers.join(',');
+        $('#courtNumberInput').val(joined);
+        loadDocket(joined);
+    };
+    reader.readAsArrayBuffer(file);
+
+    // Reset so re-uploading the same file re-triggers change
+    $('#bulkFileInput').val('');
+}
+
 function loadBulk(input) {
     var numbers = input.split(',')
         .map(function (s) { return s.trim().toUpperCase(); })
@@ -523,7 +579,7 @@ function loadBulk(input) {
     }
 
     _bulkEntries = {};
-    history.replaceState(null, '', '?' + encodeURIComponent(input));
+    try { history.replaceState(null, '', '?' + encodeURIComponent(input)); } catch (err) {}
     document.title = 'Bulk (' + numbers.length + ') — Docket Viewer';
 
     $('#loading').hide();
@@ -641,6 +697,39 @@ $(document).on('click', '.bulk-ai-btn', function () {
         $btn.prop('disabled', false).text('Retry');
     });
 });
+
+// Exports the current bulk table (regex + AI milestones, where run) to CSV or Excel
+function exportBulkTable(format) {
+    var rows = [['Court File', 'Style of Cause', 'Milestones', 'AI Milestones']];
+
+    $('#bulk-body tr[data-cn]').each(function () {
+        var $row = $(this);
+        var cn   = $row.attr('data-cn');
+        var soc  = $row.find('.bulk-soc').text().trim();
+        var ms   = $row.find('.ms-cell .s-text').map(function () { return $(this).text(); }).get().join('; ');
+
+        var $aiRow = $('[data-ai-for="' + cn + '"]');
+        var aiMs   = $aiRow.find('.s-text').map(function () { return $(this).text(); }).get().join('; ');
+
+        rows.push([cn, soc, ms, aiMs]);
+    });
+
+    if (rows.length === 1) {
+        showError('No results to export yet.');
+        return;
+    }
+
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Docket Search');
+
+    var filename = 'docket-search-' + new Date().toISOString().split('T')[0];
+    if (format === 'csv') {
+        XLSX.writeFile(wb, filename + '.csv', { bookType: 'csv' });
+    } else {
+        XLSX.writeFile(wb, filename + '.xlsx');
+    }
+}
 
 // ── Party / style-of-cause search ────────────────────────────────────────────
 
