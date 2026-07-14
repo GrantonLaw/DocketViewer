@@ -17,5 +17,16 @@ ALLOWED_ORIGINS = "https://docketviewer.grantonlaw.ca"
 [env.development]
 vars = { ALLOWED_ORIGINS = "http://localhost:8787,http://localhost:3000" }
 
-# Secrets — set once, persist across deploys:
-#   wrangler secret put GEMINI_API_KEY
+# Beta — separate Worker for testing new features before they reach main.
+# Deploy with: wrangler deploy --env beta
+[env.beta]
+name = "docketviewerbeta"
+vars = { ALLOWED_ORIGINS = "https://docketviewerbeta.grantonlaw.ca,https://docketviewerbeta.grantonlaw.com" }
+
+[env.beta.assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Secrets — set once per Worker, persist across deploys:
+#   wrangler secret put GEMINI_API_KEY               (production)
+#   wrangler secret put GEMINI_API_KEY --env beta    (beta)
