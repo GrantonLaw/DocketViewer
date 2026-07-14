@@ -3,6 +3,7 @@ name: Deploy Worker (beta)
 on:
   push:
     branches: [beta]
+  workflow_dispatch: {}
 
 jobs:
   deploy:
