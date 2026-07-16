@@ -43,6 +43,9 @@
         /* Nudge the Search button off the input so the input's focus ring isn't clipped */
         #input-file .form-control, #input-party .form-control { border-radius: 0.25rem; }
         #input-file .btn, #input-party .btn { margin-left: 4px; border-radius: 0.25rem; }
+        /* Plain (non-!important) flex layout — Bootstrap's .d-flex utility is !important and
+           would defeat jQuery's show()/hide() used to swap this box out for #input-party. */
+        #input-file { display: flex; align-items: center; gap: 0.25rem; }
 
         .case-card { border-left: 4px solid #1a3a5c; border-radius: 0.375rem; }
         .case-card .card-title { font-size: 1.05rem; font-weight: 700; color: #1a3a5c; margin-bottom: 0.6rem; }
@@ -143,7 +146,7 @@
                     onclick="setSearchMode('party')">Party Search</button>
         </div>
         <!-- Court file number input -->
-        <div class="d-flex align-items-center gap-1" id="input-file">
+        <div id="input-file">
             <div class="input-group input-group-sm" style="max-width:460px">
                 <input type="text" id="courtNumberInput" class="form-control"
                        placeholder="IMM-12345-25  (comma-separated for bulk)"
