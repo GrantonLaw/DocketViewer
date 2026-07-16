@@ -472,6 +472,16 @@ function setSearchMode(mode) {
     }
 }
 
+// ── Federal Court proxy fetch — bounded timeout ─────────────────────────────
+// The Court's server can be slow to respond on the first hit after being
+// idle. A generous but bounded timeout means a stalled request eventually
+// surfaces as an error instead of leaving the UI stuck on "Loading…" forever.
+var FC_REQUEST_TIMEOUT = 20000;
+
+function fcGetJSON(url) {
+    return $.ajax({ url: url, dataType: 'json', timeout: FC_REQUEST_TIMEOUT });
+}
+
 // ── Single-file + bulk dispatcher ─────────────────────────────────────────────
 
 function loadDocket(courtNumber) {
@@ -491,8 +501,8 @@ function loadDocket(courtNumber) {
     $('#case-section, #bulk-section, #party-section').hide();
     $('#error-msg').hide();
 
-    var caseReq = $.getJSON(PROXY_URL + '?type=case&courtnumber=' + encodeURIComponent(courtNumber));
-    var reReq   = $.getJSON(PROXY_URL + '?type=re&courtnumber='   + encodeURIComponent(courtNumber));
+    var caseReq = fcGetJSON(PROXY_URL + '?type=case&courtnumber=' + encodeURIComponent(courtNumber));
+    var reReq   = fcGetJSON(PROXY_URL + '?type=re&courtnumber='   + encodeURIComponent(courtNumber));
 
     $.when(caseReq, reReq)
         .done(function (caseResult, reResult) {
@@ -506,7 +516,7 @@ function loadDocket(courtNumber) {
             }
 
             // Fetch parties separately — non-critical
-            $.getJSON(PROXY_URL + '?type=parties&courtnumber=' + encodeURIComponent(courtNumber))
+            fcGetJSON(PROXY_URL + '?type=parties&courtnumber=' + encodeURIComponent(courtNumber))
                 .done(function (partiesData) {
                     renderPage(caseData.data[0], reData, partiesData);
                 })
@@ -514,9 +524,12 @@ function loadDocket(courtNumber) {
                     renderPage(caseData.data[0], reData, { data: [] });
                 });
         })
-        .fail(function () {
+        .fail(function (jqXHR, textStatus) {
             $('#loading').hide();
-            showError('Could not retrieve docket data. Check the file number and try again.');
+            var timedOut = textStatus === 'timeout' || jqXHR.status === 504;
+            showError(timedOut
+                ? 'The Federal Court server is taking a long time to respond (this can happen on the first search after a while of inactivity). Please try again in a moment.'
+                : 'Could not retrieve docket data. Check the file number and try again.');
         });
 }
 
@@ -613,13 +626,19 @@ function loadBulk(input) {
         tbody.append($row);
     });
 
-    // Fetch each file concurrently
-    numbers.forEach(function (cn) {
-        var caseReq = $.getJSON(PROXY_URL + '?type=case&courtnumber=' + encodeURIComponent(cn));
-        var reReq   = $.getJSON(PROXY_URL + '?type=re&courtnumber='   + encodeURIComponent(cn));
+    // Fetch files with bounded concurrency and a single retry on failure —
+    // firing all requests at once for a large batch can trip the Court
+    // server's own rate limiting, which silently stalled later rows.
+    var BULK_CONCURRENCY = 4;
+    var queue    = numbers.slice();
+    var inFlight = 0;
 
-        $.when(caseReq, reReq)
-            .done(function (caseResult, reResult) {
+    function fetchOne(cn, isRetry) {
+        var caseReq = fcGetJSON(PROXY_URL + '?type=case&courtnumber=' + encodeURIComponent(cn));
+        var reReq   = fcGetJSON(PROXY_URL + '?type=re&courtnumber='   + encodeURIComponent(cn));
+
+        return $.when(caseReq, reReq).then(
+            function (caseResult, reResult) {
                 var caseData = caseResult[0];
                 var reData   = reResult[0];
                 var $row     = $('[data-cn="' + cn + '"]', '#bulk-body');
@@ -642,13 +661,30 @@ function loadBulk(input) {
                 $row.find('.ms-cell').html($msWrap);
 
                 $row.find('.bulk-ai-btn').prop('disabled', false);
-            })
-            .fail(function () {
-                $('[data-cn="' + cn + '"]', '#bulk-body')
-                    .find('.bulk-soc')
-                    .html('<span class="text-danger" style="font-size:0.82rem">Error</span>');
+            },
+            function () {
+                // One retry — a single stalled/rate-limited request in a
+                // large batch shouldn't permanently leave a row unresolved.
+                if (!isRetry) return fetchOne(cn, true);
+
+                var $row = $('[data-cn="' + cn + '"]', '#bulk-body');
+                $row.find('.bulk-soc').html('<span class="text-danger" style="font-size:0.82rem">Error</span>');
+                $row.find('.ms-cell').html('<span class="text-danger" style="font-size:0.78rem">—</span>');
+            }
+        );
+    }
+
+    function pump() {
+        while (inFlight < BULK_CONCURRENCY && queue.length) {
+            var cn = queue.shift();
+            inFlight++;
+            fetchOne(cn, false).always(function () {
+                inFlight--;
+                pump();
             });
-    });
+        }
+    }
+    pump();
 }
 
 // Bulk AI button — event delegation
@@ -744,7 +780,7 @@ function searchParty() {
     $('#case-section, #bulk-section, #party-section, #error-msg').hide();
     $('#loading').show();
 
-    $.getJSON(PROXY_URL + '?type=soc&q=' + encodeURIComponent(q))
+    fcGetJSON(PROXY_URL + '?type=soc&q=' + encodeURIComponent(q))
         .done(function (data) {
             $('#loading').hide();
             _partyAll = data.data || [];

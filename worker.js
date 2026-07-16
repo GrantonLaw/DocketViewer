@@ -176,19 +176,13 @@ export default {
       }
       let socResp;
       try {
-        socResp = await fetch(
+        socResp = await fetchFCApi(
           'https://www.fct-cf.ca/CourtFilesAndDecisions/ProceedingsQueriesPartyInfo'
-            + '?division=t&name=' + encodeURIComponent(q),
-          {
-            headers: {
-              'Accept':     'application/json, text/javascript, */*',
-              'Referer':    'https://www.fct-cf.ca/en/court-files-and-decisions/court-files',
-              'User-Agent': 'Mozilla/5.0 (compatible; DocketViewer/1.0)',
-            },
-          }
+            + '?division=t&name=' + encodeURIComponent(q)
         );
       } catch (err) {
-        return new Response(JSON.stringify({ error: 'Network error reaching Federal Court server' }), { status: 502, headers: corsHeaders });
+        const status = err.message === 'FC_TIMEOUT' ? 504 : 502;
+        return new Response(JSON.stringify({ error: 'Federal Court server did not respond in time — please try again' }), { status, headers: corsHeaders });
       }
       const socBody = await socResp.text();
       return new Response(socBody, { status: socResp.status, headers: corsHeaders });
@@ -221,21 +215,56 @@ export default {
 
     let response;
     try {
-      response = await fetch(apiUrl, {
-        headers: {
-          'Accept':     'application/json, text/javascript, */*',
-          'Referer':    'https://www.fct-cf.ca/en/court-files-and-decisions/court-files',
-          'User-Agent': 'Mozilla/5.0 (compatible; DocketViewer/1.0)',
-        },
-      });
+      response = await fetchFCApi(apiUrl);
     } catch (err) {
-      return new Response(JSON.stringify({ error: 'Network error reaching Federal Court server' }), { status: 502, headers: corsHeaders });
+      const status = err.message === 'FC_TIMEOUT' ? 504 : 502;
+      return new Response(JSON.stringify({ error: 'Federal Court server did not respond in time — please try again' }), { status, headers: corsHeaders });
     }
 
     const body = await response.text();
     return new Response(body, { status: response.status, headers: corsHeaders });
   },
 };
+
+// ── Federal Court API fetch — bounded timeout + a couple of retries ─────────
+// The Court's server is occasionally slow to respond to the first request
+// after being idle, and can return transient 429/5xx under load. Retrying a
+// couple of times with a short per-attempt timeout keeps a cold/slow origin
+// from hanging the client indefinitely while still failing within a bounded
+// total time if the origin is genuinely down.
+const FC_TIMEOUT_MS = 15000;
+const FC_RETRY_DELAYS = [1000, 3000];
+
+async function fetchFCApi(apiUrl) {
+  for (let attempt = 0; attempt <= FC_RETRY_DELAYS.length; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FC_TIMEOUT_MS);
+    try {
+      const response = await fetch(apiUrl, {
+        headers: {
+          'Accept':     'application/json, text/javascript, */*',
+          'Referer':    'https://www.fct-cf.ca/en/court-files-and-decisions/court-files',
+          'User-Agent': 'Mozilla/5.0 (compatible; DocketViewer/1.0)',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if ((response.status === 429 || response.status >= 500) && attempt < FC_RETRY_DELAYS.length) {
+        await new Promise(r => setTimeout(r, FC_RETRY_DELAYS[attempt]));
+        continue;
+      }
+      return response;
+    } catch (err) {
+      clearTimeout(timer);
+      if (attempt < FC_RETRY_DELAYS.length) {
+        await new Promise(r => setTimeout(r, FC_RETRY_DELAYS[attempt]));
+        continue;
+      }
+      throw new Error(err.name === 'AbortError' ? 'FC_TIMEOUT' : 'FC_NETWORK_ERROR');
+    }
+  }
+}
 
 // ── Gemini milestone analysis ─────────────────────────────────────────────────
 async function analyzeMilestones(entries, apiKey) {
