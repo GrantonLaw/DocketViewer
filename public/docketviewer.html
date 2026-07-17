@@ -44,8 +44,11 @@
         #input-file .form-control, #input-party .form-control { border-radius: 0.25rem; }
         #input-file .btn, #input-party .btn { margin-left: 4px; border-radius: 0.25rem; }
         /* Plain (non-!important) flex layout — Bootstrap's .d-flex utility is !important and
-           would defeat jQuery's show()/hide() used to swap this box out for #input-party. */
-        #input-file { display: flex; align-items: center; gap: 0.25rem; }
+           would defeat jQuery's show()/hide() used to swap this box out for #input-party.
+           flex:1 1 auto lets it actually grow to fit the .input-group's max-width below
+           (a flex-basis:auto item otherwise shrink-wraps to content and ignores it);
+           min-width:0 lets it shrink back below that on narrow screens instead of overflowing. */
+        #input-file { display: flex; align-items: center; gap: 0.25rem; flex: 1 1 auto; min-width: 0; }
 
         .case-card { border-left: 4px solid #1a3a5c; border-radius: 0.375rem; }
         .case-card .card-title { font-size: 1.05rem; font-weight: 700; color: #1a3a5c; margin-bottom: 0.6rem; }
@@ -147,7 +150,7 @@
         </div>
         <!-- Court file number input -->
         <div id="input-file">
-            <div class="input-group input-group-sm" style="max-width:620px">
+            <div class="input-group input-group-sm" style="width:100%; max-width:620px">
                 <input type="text" id="courtNumberInput" class="form-control"
                        placeholder="IMM-12345-25  (comma-separated for bulk)"
                        onkeydown="if(event.key==='Enter') loadDocket()">
