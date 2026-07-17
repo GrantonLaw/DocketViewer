@@ -173,7 +173,14 @@
 
         /* ── Docket entries table ── */
         #docketTable, #bulk-table, #party-table {
+            /* Bootstrap's striped/hover/active row colors default to
+               --bs-emphasis-color (near-black, meant for light backgrounds)
+               independently of --bs-table-color — all three must be set
+               explicitly or those rows render illegible text in dark mode. */
             --bs-table-color: var(--dv-text-primary);
+            --bs-table-striped-color: var(--dv-text-primary);
+            --bs-table-hover-color: var(--dv-text-primary);
+            --bs-table-active-color: var(--dv-text-primary);
             --bs-table-border-color: var(--dv-border);
             --bs-table-striped-bg: var(--dv-bulk-ai-bg);
             --bs-table-hover-bg: var(--dv-badge-office-bg);
