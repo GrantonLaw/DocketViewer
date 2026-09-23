@@ -105,3 +105,9 @@ Court file data is reproduced from the *Federal Court of Canada — Court Files 
 ---
 
 **Need help deploying?** → See [DEPLOYMENT.md](./DEPLOYMENT.md)
+
+## Core logic and tests
+
+Docket parsing, deadline calculation, and formatting live in `public/core.js`: plain JavaScript with no DOM or Cloudflare dependencies. The page loads it with a `<script>` tag, and it can also be `require`d from the Worker or from Node. Keep page, storage, email, and routing code out of it.
+
+Run the tests with `node --test` (Node 18+, no install needed).
