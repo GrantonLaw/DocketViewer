@@ -78,6 +78,8 @@ Enter a court file number (e.g., `IMM-12345-25`) and click **Search**.
 ### Bulk Search
 Enter comma-separated file numbers (e.g., `IMM-1-25, IMM-2-25`) to load multiple at once with milestone summaries.
 
+**Export Excel** builds a workbook with a summary tab and one tab per file (case details, counsel, milestones and recorded entries). It asks whether to use AI milestones; AI requests are paced to the Worker's rate limit, with a progress bar, and any AI analysis already run on the page is reused. **Export CSV** gives the one-row-per-file table.
+
 ### Party Search
 Switch to **Party Search** tab and search by name or style of cause.
 
@@ -109,5 +111,7 @@ Court file data is reproduced from the *Federal Court of Canada — Court Files 
 ## Core logic and tests
 
 Docket parsing, deadline calculation, and formatting live in `public/core.js`: plain JavaScript with no DOM or Cloudflare dependencies. The page loads it with a `<script>` tag, and it can also be `require`d from the Worker or from Node. Keep page, storage, email, and routing code out of it.
+
+The bulk Excel workbook layout lives in `public/bulk-export.js`, which is DOM-free in the same way: it takes the ExcelJS module as an argument (loaded from the CDN only when someone exports).
 
 Run the tests with `node --test` (Node 18+, no install needed).

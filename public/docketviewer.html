@@ -226,6 +226,11 @@
             flex-shrink: 0;
         }
 
+        /* ── Bulk Excel export dialog ── */
+        #bulk-excel-modal .modal-content { background: var(--dv-bg-surface); color: var(--dv-text-primary); border-color: var(--dv-border); }
+        #bulk-excel-modal .modal-header, #bulk-excel-modal .modal-footer { border-color: var(--dv-border); }
+        [data-theme="dark"] #bulk-excel-modal .btn-close { filter: invert(1) grayscale(1) brightness(2); }
+
         /* ── Bulk search table ── */
         #bulk-section { display: none; }
         #bulk-table thead th { background: var(--dv-brand-accent); color: var(--dv-text-inverse); font-size: 0.8rem; white-space: nowrap; }
@@ -459,8 +464,17 @@
             <span class="badge bg-secondary" id="bulk-count">0</span>
             <span class="text-muted" style="font-size:0.78rem">— click a file number to open the full docket</span>
             <div class="ms-auto d-flex gap-1">
-                <button class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem" onclick="exportBulkTable('csv')">Export CSV</button>
-                <button class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem" onclick="exportBulkTable('xlsx')">Export Excel</button>
+                <button class="btn btn-sm btn-outline-secondary bulk-export-btn" style="font-size:0.78rem" onclick="exportBulkTable('csv')">Export CSV</button>
+                <button class="btn btn-sm btn-outline-secondary bulk-export-btn" style="font-size:0.78rem" onclick="openBulkExcelDialog()">Export Excel</button>
+            </div>
+        </div>
+        <div id="bulk-export-progress" class="mb-2" style="display:none">
+            <div class="d-flex align-items-center gap-2 mb-1" style="font-size:0.78rem">
+                <span id="bulk-export-status" role="status" aria-live="polite">Preparing export…</span>
+                <button type="button" id="bulk-export-cancel" class="btn btn-sm btn-link p-0 ms-auto" style="font-size:0.78rem" onclick="cancelBulkExcel()">Cancel</button>
+            </div>
+            <div class="progress" style="height:8px" role="progressbar" aria-label="Excel export progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="progress-bar" id="bulk-export-bar" style="width:0%; background:var(--dv-brand-accent)"></div>
             </div>
         </div>
         <div class="table-responsive">
@@ -477,6 +491,28 @@
             </table>
         </div>
     </div><!-- /#bulk-section -->
+
+    <!-- Bulk Excel export — asks whether to run AI milestone analysis -->
+    <div class="modal fade" id="bulk-excel-modal" tabindex="-1" aria-labelledby="bulk-excel-title" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h6 class="modal-title" id="bulk-excel-title">Export Excel</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" style="font-size:0.85rem">
+                    <p class="mb-2">The workbook will have a summary tab, then one tab per court file with its case details, counsel, milestones and recorded entries.</p>
+                    <p class="mb-2"><strong>Include an AI milestone analysis?</strong> If not, milestones come from keyword detection.</p>
+                    <p class="mb-0" id="bulk-excel-ai-note" style="color:var(--dv-text-muted); font-size:0.8rem"></p>
+                </div>
+                <div class="modal-footer py-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="startBulkExcel(false)">No, keyword milestones</button>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="startBulkExcel(true)">Yes, AI milestones</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- ── Party search results ─────────────────────────────────────────────── -->
     <div id="party-section">
@@ -545,12 +581,17 @@
 <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.print.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="/core.js"></script>
+<script src="/bulk-export.js"></script>
 
 <script>
 // Configuration — will be loaded from worker config endpoint
 var PROXY_URL     = null;  // Will be set in init
 var _searchMode   = 'file';   // 'file' | 'party'
-var _bulkEntries  = {};        // court number → RE entries[], for bulk AI
+var _bulkData     = {};        // court number → { cn, status, caseData, entries, parties, ai, aiError }
+var _bulkOrder    = [];        // court numbers in the order searched
+var _bulkLoad     = $.Deferred().resolve().promise(); // settles once every bulk row has loaded
+var _bulkGen      = 0;         // bumped per bulk search, so stale responses are dropped
+var _bulkExport   = null;      // in-progress Excel export job, if any
 var _partyAll     = [];        // full party search results (unfiltered)
 var _partyFilter  = 'imm';    // 'imm' | 'all'
 
@@ -644,6 +685,7 @@ function fcGetJSON(url) {
 // ── Single-file + bulk dispatcher ─────────────────────────────────────────────
 
 function loadDocket(courtNumber) {
+    cancelBulkExcel(true);
     courtNumber = (courtNumber || $('#courtNumberInput').val()).trim().toUpperCase();
     if (!courtNumber) { showError('Please enter a court file number.'); return; }
 
@@ -742,6 +784,7 @@ function loadBulk(input) {
     var numbers = input.split(',')
         .map(function (s) { return s.trim().toUpperCase(); })
         .filter(Boolean);
+    numbers = Array.from(new Set(numbers)); // de-dupe, keep order — each file is one row and one Excel tab
 
     if (!numbers.length) { showError('No court file numbers found.'); return; }
 
@@ -753,7 +796,9 @@ function loadBulk(input) {
         return;
     }
 
-    _bulkEntries = {};
+    var gen = ++_bulkGen;   // results from an earlier, superseded bulk search are ignored
+    _bulkData  = {};
+    _bulkOrder = numbers.slice();
     try { history.replaceState(null, '', '?' + encodeURIComponent(input)); } catch (err) {}
     document.title = 'Bulk (' + numbers.length + ') — Docket Viewer';
 
@@ -789,8 +834,11 @@ function loadBulk(input) {
     // firing all requests at once for a large batch can trip the Court
     // server's own rate limiting, which silently stalled later rows.
     var BULK_CONCURRENCY = 4;
-    var queue    = numbers.slice();
-    var inFlight = 0;
+    var queue     = numbers.slice();
+    var inFlight  = 0;
+    var remaining = numbers.length;
+    var loaded    = $.Deferred();
+    _bulkLoad = loaded.promise();
 
     function fetchOne(cn, isRetry) {
         var caseReq = fcGetJSON(PROXY_URL + '?type=case&courtnumber=' + encodeURIComponent(cn));
@@ -798,11 +846,13 @@ function loadBulk(input) {
 
         return $.when(caseReq, reReq).then(
             function (caseResult, reResult) {
+                if (gen !== _bulkGen) return;
                 var caseData = caseResult[0];
                 var reData   = reResult[0];
                 var $row     = $('[data-cn="' + cn + '"]', '#bulk-body');
 
                 if (!caseData.data || !caseData.data.length) {
+                    _bulkData[cn] = { cn: cn, status: 'notfound' };
                     $row.find('.bulk-soc').html('<span class="text-danger" style="font-size:0.82rem">Not found</span>');
                     $row.find('.ms-cell').empty();
                     return;
@@ -810,7 +860,7 @@ function loadBulk(input) {
 
                 var c       = caseData.data[0];
                 var entries = reData.data || [];
-                _bulkEntries[cn] = entries;
+                var file    = _bulkData[cn] = { cn: cn, status: 'ok', caseData: c, entries: entries, parties: [], ai: null };
 
                 $row.find('.bulk-soc').text(c.STYLE_OF_CAUSE || '—');
 
@@ -819,13 +869,22 @@ function loadBulk(input) {
                 renderMilestones(ms, $msWrap[0]);
                 $row.find('.ms-cell').html($msWrap);
 
-                $row.find('.bulk-ai-btn').prop('disabled', false);
+                $row.find('.bulk-ai-btn').prop('disabled', !!_bulkExport);
+
+                // Parties (firm/counsel) are only needed for the Excel export —
+                // non-critical, so a failure leaves counsel as "—".
+                return fcGetJSON(PROXY_URL + '?type=parties&courtnumber=' + encodeURIComponent(cn)).then(
+                    function (pd) { file.parties = (pd && pd.data) || []; },
+                    function () {}
+                );
             },
             function () {
                 // One retry — a single stalled/rate-limited request in a
                 // large batch shouldn't permanently leave a row unresolved.
                 if (!isRetry) return fetchOne(cn, true);
+                if (gen !== _bulkGen) return;
 
+                _bulkData[cn] = { cn: cn, status: 'error' };
                 var $row = $('[data-cn="' + cn + '"]', '#bulk-body');
                 $row.find('.bulk-soc').html('<span class="text-danger" style="font-size:0.82rem">Error</span>');
                 $row.find('.ms-cell').html('<span class="text-danger" style="font-size:0.78rem">—</span>');
@@ -839,6 +898,7 @@ function loadBulk(input) {
             inFlight++;
             fetchOne(cn, false).always(function () {
                 inFlight--;
+                if (--remaining === 0) loaded.resolve();
                 pump();
             });
         }
@@ -846,57 +906,84 @@ function loadBulk(input) {
     pump();
 }
 
-// Bulk AI button — event delegation
-$(document).on('click', '.bulk-ai-btn', function () {
-    var $btn    = $(this);
-    var cn      = $btn.data('cn');
-    var entries = _bulkEntries[cn] || [];
+// ── Bulk AI analysis ─────────────────────────────────────────────────────────
 
-    // Remove any previous AI expand row for this file
-    $('[data-ai-for="' + cn + '"]').remove();
-    $btn.prop('disabled', true).text('Analysing…');
+// The Worker allows one milestones request per IP every 8 s, timed from when
+// each request arrives. Spacing requests a full 8 s apart at the browser would
+// still trip it whenever network jitter delivers one a little early, so paced
+// requests leave 1.5 s of headroom — and a 429 that slips through is waited
+// out and retried rather than treated as a failure.
+var AI_PACE_MS      = 9500;
+var AI_MAX_ATTEMPTS = 3;
+var _lastAICall     = 0;   // when the last milestones request was sent, from any button
 
-    $.ajax({
+function requestAIMilestones(entries) {
+    _lastAICall = Date.now();
+    return $.ajax({
         url:         PROXY_URL + '?type=milestones',
         method:      'POST',
         contentType: 'application/json',
         data:        JSON.stringify({ entries: entries }),
         dataType:    'json',
         timeout:     60000,
-    })
-    .done(function (m) {
-        var $mainRow = $('[data-cn="' + cn + '"]', '#bulk-body');
-        var $msWrap  = $('<div>').addClass('status-row');
-        renderMilestones(m, $msWrap[0]);
-
-        var $aiRow = $('<tr class="bulk-ai-row">').attr('data-ai-for', cn);
-        $aiRow.append(
-            $('<td colspan="4">')
-                .css({ paddingLeft: '1.5rem' })
-                .html('<span class="panel-label me-2">AI:</span>')
-                .append($msWrap)
-        );
-        $mainRow.after($aiRow);
-        $btn.closest('td').html('<span class="text-muted" style="font-size:0.75rem">✓ Done</span>');
-    })
-    .fail(function (xhr) {
-        var err = (xhr.responseJSON && xhr.responseJSON.error) || '';
-        var msg = (xhr.status === 503 || err === 'PEAK_DEMAND')
-            ? 'Peak demand — try again later'
-            : 'Analysis failed — try again';
-
-        var $mainRow = $('[data-cn="' + cn + '"]', '#bulk-body');
-        var $errRow  = $('<tr class="bulk-ai-row">').attr('data-ai-for', cn);
-        $errRow.append(
-            $('<td colspan="4">').css({ paddingLeft: '1.5rem' })
-                .html('<span class="text-muted" style="font-size:0.78rem">' + escHtml(msg) + '</span>')
-        );
-        $mainRow.after($errRow);
-        $btn.prop('disabled', false).text('Retry');
     });
+}
+
+function aiErrorMessage(xhr) {
+    var err = (xhr && xhr.responseJSON && xhr.responseJSON.error) || '';
+    return (xhr && xhr.status === 503) || err === 'PEAK_DEMAND' ? 'Peak demand — try again later' : 'Analysis failed — try again';
+}
+
+function showBulkAIResult(cn, m) {
+    $('[data-ai-for="' + cn + '"]').remove();
+    var $mainRow = $('[data-cn="' + cn + '"]', '#bulk-body');
+    var $msWrap  = $('<div>').addClass('status-row');
+    renderMilestones(m, $msWrap[0]);
+
+    var $aiRow = $('<tr class="bulk-ai-row">').attr('data-ai-for', cn);
+    $aiRow.append(
+        $('<td colspan="4">')
+            .css({ paddingLeft: '1.5rem' })
+            .html('<span class="panel-label me-2">AI:</span>')
+            .append($msWrap)
+    );
+    $mainRow.after($aiRow);
+    $mainRow.find('.bulk-ai-btn').closest('td').html('<span class="text-muted" style="font-size:0.75rem">✓ Done</span>');
+}
+
+function showBulkAIError(cn, msg) {
+    $('[data-ai-for="' + cn + '"]').remove();
+    var $mainRow = $('[data-cn="' + cn + '"]', '#bulk-body');
+    var $errRow  = $('<tr class="bulk-ai-row">').attr('data-ai-for', cn);
+    $errRow.append(
+        $('<td colspan="4">').css({ paddingLeft: '1.5rem' })
+            .html('<span class="text-muted" style="font-size:0.78rem">' + escHtml(msg) + '</span>')
+    );
+    $mainRow.after($errRow);
+    $mainRow.find('.bulk-ai-btn').prop('disabled', !!_bulkExport).text('Retry');
+}
+
+// Bulk AI button — event delegation
+$(document).on('click', '.bulk-ai-btn', function () {
+    var $btn = $(this);
+    var cn   = $btn.data('cn');
+    var file = _bulkData[cn];
+    if (!file || file.status !== 'ok') return;
+
+    $('[data-ai-for="' + cn + '"]').remove();
+    $btn.prop('disabled', true).text('Analysing…');
+
+    requestAIMilestones(file.entries)
+        .done(function (m) {
+            file.ai = m;
+            showBulkAIResult(cn, m);
+        })
+        .fail(function (xhr) {
+            showBulkAIError(cn, aiErrorMessage(xhr));
+        });
 });
 
-// Exports the current bulk table (regex + AI milestones, where run) to CSV or Excel
+// Exports the current bulk table (regex + AI milestones, where run) to CSV
 function exportBulkTable(format) {
     var rows = [['Court File', 'Style of Cause', 'Milestones', 'AI Milestones']];
 
@@ -922,10 +1009,191 @@ function exportBulkTable(format) {
     XLSX.utils.book_append_sheet(wb, ws, 'Docket Search');
 
     var filename = 'docket-search-' + new Date().toISOString().split('T')[0];
-    if (format === 'csv') {
-        XLSX.writeFile(wb, filename + '.csv', { bookType: 'csv' });
+    XLSX.writeFile(wb, filename + '.' + format, { bookType: format });
+}
+
+// ── Bulk Excel export (one tab per file) ─────────────────────────────────────
+
+var EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+var _excelJSLoad = null;
+
+// ExcelJS is ~1 MB, so it is fetched only when someone actually exports
+function loadExcelJS() {
+    if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+    if (!_excelJSLoad) {
+        _excelJSLoad = new Promise(function (resolve, reject) {
+            var s = document.createElement('script');
+            s.src     = EXCELJS_URL;
+            s.onload  = function () { resolve(window.ExcelJS); };
+            s.onerror = function () { _excelJSLoad = null; reject(new Error('Could not load the Excel library')); };
+            document.head.appendChild(s);
+        });
+    }
+    return _excelJSLoad;
+}
+
+function aiPendingFiles() {
+    return _bulkOrder.filter(function (cn) {
+        var f = _bulkData[cn];
+        return !f || (f.status === 'ok' && !f.ai);   // still-loading files may need AI too
+    });
+}
+
+function fmtDuration(ms) {
+    var mins = Math.ceil(ms / 60000);
+    return mins <= 1 ? 'about a minute' : 'about ' + mins + ' minutes';
+}
+
+function openBulkExcelDialog() {
+    if (_bulkExport) return;
+    if (!_bulkOrder.length) { showError('No results to export yet.'); return; }
+
+    var pending = aiPendingFiles().length;
+    var done    = _bulkOrder.filter(function (cn) { return _bulkData[cn] && _bulkData[cn].ai; }).length;
+    var note;
+    if (!pending) {
+        note = 'AI analysis has already been run on every file, so it will be reused at no extra cost.';
     } else {
-        XLSX.writeFile(wb, filename + '.xlsx');
+        note = 'AI analysis will run on ' + pending + ' file' + (pending === 1 ? '' : 's') +
+               (done ? ' (' + done + ' already analysed will be reused)' : '') +
+               '. Requests are paced to stay within the server’s rate limit, so this will take ' +
+               fmtDuration(pending * AI_PACE_MS) + '. Keyword milestones are immediate.';
+    }
+    $('#bulk-excel-ai-note').text(note);
+    bootstrap.Modal.getOrCreateInstance('#bulk-excel-modal').show();
+}
+
+function startBulkExcel(useAI) {
+    bootstrap.Modal.getOrCreateInstance('#bulk-excel-modal').hide();
+    runBulkExcel(useAI);
+}
+
+function setExportProgress(pct, text) {
+    $('#bulk-export-bar').css('width', pct + '%');
+    $('#bulk-export-progress .progress').attr('aria-valuenow', Math.round(pct));
+    $('#bulk-export-status').text(text);
+}
+
+function setExportLocked(locked) {
+    $('.bulk-export-btn').prop('disabled', locked);
+    // Per-row AI buttons share the Worker's cooldown with the export's paced requests
+    $('.bulk-ai-btn').each(function () {
+        var f = _bulkData[$(this).data('cn')];
+        $(this).prop('disabled', locked || !f || f.status !== 'ok');
+    });
+}
+
+// Resolves after ms, or straight away if the export is cancelled meanwhile
+function exportSleep(job, ms) {
+    return new Promise(function (resolve) {
+        if (ms <= 0 || job.cancelled) return resolve();
+        var t = setTimeout(resolve, ms);
+        job.wake = function () { clearTimeout(t); resolve(); };
+    });
+}
+
+async function analyseForExport(job, file) {
+    for (var attempt = 1; attempt <= AI_MAX_ATTEMPTS; attempt++) {
+        await exportSleep(job, _lastAICall + AI_PACE_MS - Date.now());
+        if (job.cancelled) return;
+        try {
+            var m = await requestAIMilestones(file.entries);
+            if (job.gen !== _bulkGen) return;   // a newer search has replaced this table
+            file.ai = m;
+            file.aiError = null;
+            showBulkAIResult(file.cn, file.ai);
+            return;
+        } catch (xhr) {
+            if (job.cancelled || job.gen !== _bulkGen) return;
+            var retryable = xhr.status === 429 || xhr.status === 503 || xhr.statusText === 'timeout';
+            if (!retryable || attempt === AI_MAX_ATTEMPTS) {
+                file.aiError = xhr.status === 503 ? 'peak demand' : xhr.status === 429 ? 'rate limited' : 'analysis failed';
+                showBulkAIError(file.cn, aiErrorMessage(xhr));
+                return;
+            }
+        }
+    }
+}
+
+function downloadBlob(blob, filename) {
+    var a = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+async function runBulkExcel(useAI) {
+    if (_bulkExport) return;
+    var job = _bulkExport = { cancelled: false, gen: _bulkGen };
+    setExportLocked(true);
+    $('#bulk-export-cancel').show();
+    $('#bulk-export-progress').show();
+    setExportProgress(0, 'Waiting for every file to finish loading…');
+
+    try {
+        var lib = loadExcelJS();     // start fetching the library while other work runs
+        await _bulkLoad;
+        if (job.cancelled) return;
+
+        var pending = useAI ? aiPendingFiles().map(function (cn) { return _bulkData[cn]; }) : [];
+        var aiShare = pending.length ? 90 : 0;  // share of the bar given to AI analysis
+
+        for (var i = 0; i < pending.length; i++) {
+            var left = (pending.length - i) * AI_PACE_MS;
+            setExportProgress(aiShare * i / pending.length,
+                'AI analysis: file ' + (i + 1) + ' of ' + pending.length + ' (' + pending[i].cn + ') — ' + fmtDuration(left) + ' remaining');
+            await analyseForExport(job, pending[i]);
+            if (job.cancelled) return;
+        }
+
+        setExportProgress(Math.max(aiShare, 5), 'Building workbook…');
+        var ExcelJS = await lib;
+        if (job.cancelled) return;
+
+        var files = _bulkOrder.map(function (cn) { return _bulkData[cn] || { cn: cn, status: 'error' }; });
+        var now   = new Date();
+        var wb    = buildBulkWorkbook(ExcelJS, files, {
+            useAI:       useAI,
+            todayStr:    localTodayStr(),
+            generatedAt: localTodayStr() + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0'),
+            siteUrl:     window.location.origin + '/',
+        });
+        var buffer = await wb.xlsx.writeBuffer();
+        if (job.cancelled) return;
+
+        var filename = 'docket-search-' + localTodayStr() + '.xlsx';
+        downloadBlob(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename);
+
+        var failed = pending.filter(function (f) { return f.aiError; }).length;
+        setExportProgress(100, 'Downloaded ' + filename +
+            (failed ? ' — AI analysis was unavailable for ' + failed + ' file' + (failed === 1 ? '' : 's') + ', so their tabs show keyword milestones' : ''));
+        $('#bulk-export-cancel').hide();
+        if (!failed) setTimeout(function () { if (!_bulkExport) $('#bulk-export-progress').fadeOut(); }, 5000);
+    } catch (err) {
+        console.error(err);
+        setExportProgress(0, 'Export failed — ' + (err && err.message ? err.message : 'please try again'));
+        $('#bulk-export-cancel').hide();
+    } finally {
+        if (_bulkExport === job) _bulkExport = null;
+        if (job.gen === _bulkGen && !_bulkExport) setExportLocked(false);
+    }
+}
+
+// silent: a new search superseded the export, so just tidy up
+function cancelBulkExcel(silent) {
+    var job = _bulkExport;
+    if (!job) return;
+    job.cancelled = true;
+    if (job.wake) job.wake();
+    _bulkExport = null;
+    setExportLocked(false);
+    if (silent) {
+        $('#bulk-export-progress').hide();
+    } else {
+        setExportProgress(0, 'Export cancelled — AI results finished so far are kept and will be reused');
+        $('#bulk-export-cancel').hide();
     }
 }
 
@@ -935,6 +1203,7 @@ function searchParty() {
     var q = $('#partyNameInput').val().trim();
     if (!q) return;
 
+    cancelBulkExcel(true);
     _partyAll = [];
     $('#case-section, #bulk-section, #party-section, #error-msg').hide();
     $('#loading').show();
@@ -1052,9 +1321,7 @@ function renderPage(c, re, partiesData) {
     entries.sort(function (a, b) { return a.RE_NO - b.RE_NO; });
 
     entries.forEach(function (e) {
-        var desc = (e.RECORDED_ENTRY || '').trim();
-        if (e.REGISTRY_NOTES_EXTERNAL) desc += '\n' + e.REGISTRY_NOTES_EXTERNAL.trim();
-        if (e.COMMAND_PHRASE_EN)        desc += '\n' + e.COMMAND_PHRASE_EN.trim();
+        var desc = entryDescription(e);
 
         $('#docket-body').append(
             '<tr>' +
@@ -1093,34 +1360,16 @@ function renderPartyInfo(partiesData, styleOfCause) {
     var parties = (partiesData && partiesData.data) ? partiesData.data : [];
     if (!parties.length) return;
 
-    var socUpper = styleOfCause.toUpperCase();
-    var vIdx     = socUpper.indexOf(' V. ');
-    var socLeft  = (vIdx !== -1) ? socUpper.substring(0, vIdx).trim() : socUpper;
+    var counsel = resolveCounsel(parties, styleOfCause);
 
-    var govKeywords = ['MCI', 'MPSEP', 'MINISTER', 'ATTORNEY GENERAL', ' AG ', 'CBSA', 'PUBLIC SAFETY', 'SOLICITOR GENERAL'];
-    var applicantIsGov = govKeywords.some(function (k) { return socLeft.includes(k); });
-
-    var govParties = [], individualParties = [];
-    parties.forEach(function (p) {
-        var n = (p.PARTY_NAME || '').toUpperCase();
-        var isGov = n.includes('MINISTER') || n.includes('ATTORNEY GENERAL') ||
-                    n.includes('CBSA') || n.includes('CROWN') ||
-                    n.includes('CANADA BORDER') || n.includes('PUBLIC SAFETY') ||
-                    n.includes('SOLICITOR GENERAL');
-        (isGov ? govParties : individualParties).push(p);
-    });
-
-    var applicantParty  = applicantIsGov ? (govParties[0]        || null) : (individualParties[0] || null);
-    var respondentParty = applicantIsGov ? (individualParties[0] || null) : null;
-
-    if (applicantParty) {
-        $('#applicant-firm').text(applicantParty.SOLCTR_FIRM || '—');
-        $('#applicant-counsel').text(formatCounsel(applicantParty.SOLCTR_CONTACT));
+    if (counsel.applicant) {
+        $('#applicant-firm').text(counsel.applicant.firm);
+        $('#applicant-counsel').text(counsel.applicant.counsel);
     }
 
-    if (applicantIsGov && respondentParty) {
-        $('#respondent-firm').text(respondentParty.SOLCTR_FIRM || '—');
-        $('#respondent-counsel').text(formatCounsel(respondentParty.SOLCTR_CONTACT));
+    if (counsel.respondent) {
+        $('#respondent-firm').text(counsel.respondent.firm);
+        $('#respondent-counsel').text(counsel.respondent.counsel);
         $('#respondent-info').show();
     }
 }
@@ -1174,118 +1423,23 @@ function badge(text, cls) {
 
 // target: CSS selector string OR DOM element OR jQuery object
 function renderMilestones(m, target) {
-    var $t    = (typeof target === 'string') ? $(target) : $(target);
-    var html  = '';
-    // Compare as local-calendar-date strings, not Date objects: due dates are UTC
-    // midnight, and `new Date()` is local time, so anyone west of UTC (all of Canada)
-    // would see a deadline flip to overdue hours before local midnight on the due date.
-    var now      = new Date();
-    var todayStr = now.getFullYear() + '-' +
-        String(now.getMonth() + 1).padStart(2, '0') + '-' +
-        String(now.getDate()).padStart(2, '0');
-
-    var due   = computeDeadlines(m);
-
-    function dateStr(d) { return d ? d.split('T')[0] : ''; }
-    function isOverdue(d) { return d.toISOString().split('T')[0] < todayStr; }
-
-    // Perfected
-    if (m.perfected && m.perfected.found) {
-        html += badge('PERFECTED ' + dateStr(m.perfected.date), 's-green');
-    }
-
-    // RMOA
-    if (m.rmoa && m.rmoa.found) {
-        html += badge('RMOA FILED ' + dateStr(m.rmoa.date), 's-green');
-    } else if (due.rmoaDue) {
-        html += badge('RMOA DUE ' + due.rmoaDue.toISOString().split('T')[0], isOverdue(due.rmoaDue) ? 's-red' : 's-amber');
-    }
-
-    // Reply
-    if (m.reply && m.reply.found) {
-        html += badge('REPLY FILED' + (m.reply.date ? ' ' + dateStr(m.reply.date) : ''), 's-green');
-    }
-
-    // Stay
-    if (m.stay && m.stay.status) {
-        var stayMap = {
-            filed:     ['STAY FILED',     's-amber'],
-            granted:   ['STAY GRANTED',   's-green'],
-            dismissed: ['STAY DISMISSED', 's-red'],
-        };
-        var sc = stayMap[m.stay.status];
-        if (sc) html += badge(sc[0], sc[1]);
-    }
-
-    // Other motion
-    if (m.motion && m.motion.status) {
-        var motionMap = {
-            filed_no_response:    ['MOTION FILED',   's-amber'],
-            decision_pending:     ['MOTION PENDING', 's-amber'],
-            decided_or_abandoned: ['MOTION DECIDED', 's-neutral'],
-        };
-        var mc = motionMap[m.motion.status];
-        if (mc) html += badge(mc[0], mc[1]);
-    }
-
-    // Pending leave — With Court
-    if (m.pending_leave && m.pending_leave.found) {
-        html += badge('WITH COURT', 's-gray');
-    }
-
-    // Leave dismissed
-    if (m.leave_dismissed && m.leave_dismissed.found) {
-        html += badge('LEAVE DISMISSED' + (m.leave_dismissed.date ? ' ' + dateStr(m.leave_dismissed.date) : ''), 's-red');
-    }
-
-    // CTR
-    if (m.ctr && m.ctr.status) {
-        if (m.ctr.status === 'filed') {
-            html += badge('CTR FILED' + (m.ctr.filed_date ? ' ' + dateStr(m.ctr.filed_date) : ''), 's-green');
-        } else if (m.ctr.status === 'ordered') {
-            if (due.ctrDue) {
-                html += badge('CTR DUE ' + due.ctrDue.toISOString().split('T')[0], isOverdue(due.ctrDue) ? 's-red' : 's-amber');
-            } else {
-                html += badge('CTR ORDERED', 's-amber');
-            }
-        }
-    }
-
-    // Applicant FMOA
-    if (m.applicant_fmoa && m.applicant_fmoa.found) {
-        html += badge('APPLICANT FMOA' + (m.applicant_fmoa.date ? ' ' + dateStr(m.applicant_fmoa.date) : ''), 's-green');
-    }
-
-    // Respondent FMOA
-    if (m.respondent_fmoa && m.respondent_fmoa.found) {
-        html += badge('RESPONDENT FMOA' + (m.respondent_fmoa.date ? ' ' + dateStr(m.respondent_fmoa.date) : ''), 's-green');
-    }
-
-    // JR Scheduled — suppress once hearing has occurred
-    if (m.jr_scheduled && m.jr_scheduled.found && !(m.jr_heard && m.jr_heard.found)) {
-        var jrDt = m.jr_scheduled.datetime || '';
-        html += badge('JR SCHEDULED' + (jrDt ? ' ' + jrDt.split('T')[0] : ''), 's-red');
-    }
-
-    // JR Heard with result folded in
-    if (m.jr_heard && m.jr_heard.found) {
-        var heardLabel = 'JR HEARD' + (m.jr_heard.date ? ' ' + dateStr(m.jr_heard.date) : '');
-        var result = m.jr_decision && m.jr_decision.status;
-        if      (result === 'granted')   html += badge(heardLabel + ' — GRANTED',   's-green');
-        else if (result === 'dismissed') html += badge(heardLabel + ' — DISMISSED', 's-red');
-        else                             html += badge(heardLabel, 's-neutral');
-    }
-
-    // Discontinued
-    if (m.discontinued && m.discontinued.found) {
-        html += badge('DISCONTINUED' + (m.discontinued.date ? ' ' + dateStr(m.discontinued.date) : ''), 's-green');
-    }
+    var html = milestoneBadges(m, localTodayStr()).map(function (b) {
+        return badge(b.text, 's-' + b.tone);
+    }).join('');
 
     if (!html) {
         html = '<span class="text-muted" style="font-size:0.78rem">No milestones detected yet</span>';
     }
 
-    $t.html(html);
+    $(target).html(html);
+}
+
+// Local-calendar YYYY-MM-DD — see milestoneBadges for why this is a string.
+function localTodayStr() {
+    var now = new Date();
+    return now.getFullYear() + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0');
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────

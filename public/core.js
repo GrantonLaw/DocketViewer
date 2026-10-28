@@ -293,6 +293,129 @@
         return d.split('T')[0];
     }
 
+    // Ordered milestone badges for display — shared by the page and the Excel
+    // export. todayStr is a local-calendar YYYY-MM-DD, compared as a string:
+    // due dates are UTC midnight, so comparing Date objects against local time
+    // would flip a deadline to overdue hours early anywhere west of UTC.
+    // Each badge is { text, tone } where tone is green|amber|red|gray|neutral.
+    function milestoneBadges(m, todayStr) {
+        var out = [];
+        var due = computeDeadlines(m);
+
+        function push(text, tone) { out.push({ text: text, tone: tone }); }
+        function dateStr(d) { return d ? d.split('T')[0] : ''; }
+        function iso(d) { return d.toISOString().split('T')[0]; }
+        function dueTone(d) { return iso(d) < todayStr ? 'red' : 'amber'; }
+
+        if (m.perfected && m.perfected.found) push('PERFECTED ' + dateStr(m.perfected.date), 'green');
+
+        if (m.rmoa && m.rmoa.found)  push('RMOA FILED ' + dateStr(m.rmoa.date), 'green');
+        else if (due.rmoaDue)        push('RMOA DUE ' + iso(due.rmoaDue), dueTone(due.rmoaDue));
+
+        if (m.reply && m.reply.found) push('REPLY FILED' + (m.reply.date ? ' ' + dateStr(m.reply.date) : ''), 'green');
+
+        if (m.stay && m.stay.status) {
+            var sc = {
+                filed:     ['STAY FILED',     'amber'],
+                granted:   ['STAY GRANTED',   'green'],
+                dismissed: ['STAY DISMISSED', 'red'],
+            }[m.stay.status];
+            if (sc) push(sc[0], sc[1]);
+        }
+
+        if (m.motion && m.motion.status) {
+            var mc = {
+                filed_no_response:    ['MOTION FILED',   'amber'],
+                decision_pending:     ['MOTION PENDING', 'amber'],
+                decided_or_abandoned: ['MOTION DECIDED', 'neutral'],
+            }[m.motion.status];
+            if (mc) push(mc[0], mc[1]);
+        }
+
+        if (m.pending_leave && m.pending_leave.found) push('WITH COURT', 'gray');
+
+        if (m.leave_dismissed && m.leave_dismissed.found) {
+            push('LEAVE DISMISSED' + (m.leave_dismissed.date ? ' ' + dateStr(m.leave_dismissed.date) : ''), 'red');
+        }
+
+        if (m.ctr && m.ctr.status) {
+            if (m.ctr.status === 'filed') {
+                push('CTR FILED' + (m.ctr.filed_date ? ' ' + dateStr(m.ctr.filed_date) : ''), 'green');
+            } else if (m.ctr.status === 'ordered') {
+                if (due.ctrDue) push('CTR DUE ' + iso(due.ctrDue), dueTone(due.ctrDue));
+                else            push('CTR ORDERED', 'amber');
+            }
+        }
+
+        if (m.applicant_fmoa && m.applicant_fmoa.found) {
+            push('APPLICANT FMOA' + (m.applicant_fmoa.date ? ' ' + dateStr(m.applicant_fmoa.date) : ''), 'green');
+        }
+        if (m.respondent_fmoa && m.respondent_fmoa.found) {
+            push('RESPONDENT FMOA' + (m.respondent_fmoa.date ? ' ' + dateStr(m.respondent_fmoa.date) : ''), 'green');
+        }
+
+        // JR Scheduled — suppress once hearing has occurred
+        if (m.jr_scheduled && m.jr_scheduled.found && !(m.jr_heard && m.jr_heard.found)) {
+            var jrDt = m.jr_scheduled.datetime || '';
+            push('JR SCHEDULED' + (jrDt ? ' ' + jrDt.split('T')[0] : ''), 'red');
+        }
+
+        // JR Heard with result folded in
+        if (m.jr_heard && m.jr_heard.found) {
+            var heardLabel = 'JR HEARD' + (m.jr_heard.date ? ' ' + dateStr(m.jr_heard.date) : '');
+            var result = m.jr_decision && m.jr_decision.status;
+            if      (result === 'granted')   push(heardLabel + ' — GRANTED',   'green');
+            else if (result === 'dismissed') push(heardLabel + ' — DISMISSED', 'red');
+            else                             push(heardLabel, 'neutral');
+        }
+
+        if (m.discontinued && m.discontinued.found) {
+            push('DISCONTINUED' + (m.discontinued.date ? ' ' + dateStr(m.discontinued.date) : ''), 'green');
+        }
+
+        return out;
+    }
+
+    // Works out which party is the applicant and, where the Crown is the
+    // applicant, who the respondent is — then returns each side's firm and
+    // counsel. Returns { applicant: {firm, counsel}|null, respondent: {firm, counsel}|null }.
+    function resolveCounsel(parties, styleOfCause) {
+        parties = parties || [];
+        var socUpper = (styleOfCause || '').toUpperCase();
+        var vIdx     = socUpper.indexOf(' V. ');
+        var socLeft  = (vIdx !== -1) ? socUpper.substring(0, vIdx).trim() : socUpper;
+
+        var govKeywords = ['MCI', 'MPSEP', 'MINISTER', 'ATTORNEY GENERAL', ' AG ', 'CBSA', 'PUBLIC SAFETY', 'SOLICITOR GENERAL'];
+        var applicantIsGov = govKeywords.some(function (k) { return socLeft.includes(k); });
+
+        var govParties = [], individualParties = [];
+        parties.forEach(function (p) {
+            var n = (p.PARTY_NAME || '').toUpperCase();
+            var isGov = n.includes('MINISTER') || n.includes('ATTORNEY GENERAL') ||
+                        n.includes('CBSA') || n.includes('CROWN') ||
+                        n.includes('CANADA BORDER') || n.includes('PUBLIC SAFETY') ||
+                        n.includes('SOLICITOR GENERAL');
+            (isGov ? govParties : individualParties).push(p);
+        });
+
+        var applicantParty  = applicantIsGov ? (govParties[0]        || null) : (individualParties[0] || null);
+        var respondentParty = applicantIsGov ? (individualParties[0] || null) : null;
+
+        function side(p) {
+            return p ? { firm: p.SOLCTR_FIRM || '—', counsel: formatCounsel(p.SOLCTR_CONTACT) } : null;
+        }
+        return { applicant: side(applicantParty), respondent: side(respondentParty) };
+    }
+
+    // Recorded-entry text as shown in the docket table: the entry itself plus
+    // any external registry notes and command phrase, one per line.
+    function entryDescription(e) {
+        var desc = (e.RECORDED_ENTRY || '').trim();
+        if (e.REGISTRY_NOTES_EXTERNAL) desc += '\n' + e.REGISTRY_NOTES_EXTERNAL.trim();
+        if (e.COMMAND_PHRASE_EN)        desc += '\n' + e.COMMAND_PHRASE_EN.trim();
+        return desc;
+    }
+
     var api = {
         FC_HOLIDAYS: FC_HOLIDAYS,
         isSeasonalRecess: isSeasonalRecess,
@@ -303,6 +426,9 @@
         formatCounsel: formatCounsel,
         titleCase: titleCase,
         fmtDate: fmtDate,
+        milestoneBadges: milestoneBadges,
+        resolveCounsel: resolveCounsel,
+        entryDescription: entryDescription,
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else Object.assign(root, api);

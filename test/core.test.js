@@ -145,3 +145,45 @@ test('a notice of discontinuance clears WITH COURT', () => {
     assert.equal(m.pending_leave.found, false);
     assert.equal(m.discontinued.found, true);
 });
+
+test('milestoneBadges orders badges and colours RMOA due by local date', () => {
+    const m = core.detectMilestonesRegex([entry(1, '2026-09-01', PERFECTED)]);
+    // RMOA due 2026-10-01 — amber on the day itself, red only from the next day
+    assert.deepEqual(core.milestoneBadges(m, '2026-10-01'), [
+        { text: 'PERFECTED 2026-09-01', tone: 'green' },
+        { text: 'RMOA DUE 2026-10-01',  tone: 'amber' },
+    ]);
+    assert.equal(core.milestoneBadges(m, '2026-10-02')[1].tone, 'red');
+});
+
+test('milestoneBadges folds the JR result into JR HEARD and hides JR SCHEDULED', () => {
+    const badges = core.milestoneBadges({
+        jr_scheduled: { found: true, datetime: '2026-05-01T09:30:00' },
+        jr_heard:     { found: true, date: '2026-05-01' },
+        jr_decision:  { status: 'granted' },
+    }, '2026-06-01');
+    assert.deepEqual(badges, [{ text: 'JR HEARD 2026-05-01 — GRANTED', tone: 'green' }]);
+    assert.deepEqual(core.milestoneBadges({}, '2026-06-01'), []);
+});
+
+test('resolveCounsel picks the applicant, and the respondent only when the Crown applies', () => {
+    const parties = [
+        { PARTY_NAME: 'THE MINISTER OF CITIZENSHIP AND IMMIGRATION', SOLCTR_FIRM: 'DOJ', SOLCTR_CONTACT: 'ROE, RICHARD' },
+        { PARTY_NAME: 'JANE DOE', SOLCTR_FIRM: 'Smith LLP', SOLCTR_CONTACT: 'SMITH, JOHN' },
+    ];
+    assert.deepEqual(core.resolveCounsel(parties, 'JANE DOE v. MCI'), {
+        applicant:  { firm: 'Smith LLP', counsel: 'John Smith' },
+        respondent: null,
+    });
+    assert.deepEqual(core.resolveCounsel(parties, 'MCI v. JANE DOE'), {
+        applicant:  { firm: 'DOJ',       counsel: 'Richard Roe' },
+        respondent: { firm: 'Smith LLP', counsel: 'John Smith' },
+    });
+    assert.deepEqual(core.resolveCounsel([], 'X v. Y'), { applicant: null, respondent: null });
+});
+
+test('entryDescription appends registry notes and command phrase on new lines', () => {
+    assert.equal(core.entryDescription({ RECORDED_ENTRY: ' Order ', REGISTRY_NOTES_EXTERNAL: 'note ', COMMAND_PHRASE_EN: 'phrase' }),
+        'Order\nnote\nphrase');
+    assert.equal(core.entryDescription({}), '');
+});
