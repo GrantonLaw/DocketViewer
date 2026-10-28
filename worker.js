@@ -14,7 +14,7 @@
  *   POST /?type=milestones  (body: { entries: [...] })
  *   GET  /?type=config         (returns proxy URL and origins for client-side use)
  */
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const GEMINI_MODEL = 'gemini-3.5-flash-lite';
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 // ── In-memory cooldown (per IP, resets if the Worker isolate is recycled) ────
