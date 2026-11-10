@@ -541,6 +541,9 @@
     function serviceDateIn(t) {
         var m = t.match(new RegExp('\\bserved on ' + FCA_DATE, 'i'));
         if (m) return parseDocketDate(m[1]);
+        // 2026 French format: "... signifié(e)(s) le 2026-07-07"
+        m = t.match(new RegExp("\\bsignifiée?s?(?:\\(e\\))?(?:\\(s\\))?\\s+le\\s+" + FCA_DATE, 'i'));
+        if (m) return parseDocketDate(m[1]);
         var a = t.search(/proof of service|confirming service|attestant la signification|acknowledg(?:e)?ment of service/i);
         if (a < 0) return null;
         var rx = new RegExp('(\\p{L}+)\\s+(?:on|le)\\s+' + FCA_DATE, 'giu'), rest = t.slice(a), mm;
@@ -621,7 +624,7 @@
         rule74Passed:        /doomed to fail test is (?:also )?not met|is not doomed|(?:appeal|application) may proceed|shall proceed|(?:shall|will) not be removed/i,
         extension:           /extensions? of (?:the )?time|\bextend(?:s|ed|ing)?\b[^.\n]{0,60}\b(?:time|timelines?|deadlines?|periods?|dates?)\b|\brule\s*7\b|\br\.\s*7\b|\bEOT\b|prorog|délai supplémentaire/i,
         schedule:            /schedul|timetable|échéancier|calendrier|time periods|shall (?:serve and )?file|shall be (?:served and )?filed|no later than|on or before|within (?:\w+ )?\(?\d+\)? (?:business |calendar )?days|dans les (?:\w+ )?\(?\d+\)? jours|au plus tard/i,
-        suspension:          /abeyance|timelines?[^.\n]{0,40}suspended|suspended pending|en suspens|délais?[^.\n]{0,40}suspendus?/i,
+        suspension:          /abeyance|timelines?[^.\n]{0,40}suspended|suspended pending|en suspens|délais?[^.\n]{0,40}suspendus?|\b(?:this|the) (?:appeal|application)\b[^.\n]{0,30}\b(?:is|are|be|shall be|remains?|will be) (?:hereby )?(?:suspended|stayed)\b|\b(?:appel|instance|déroulement|demande)\b[^.\n]{0,40}\b(?:est|sont|soit|demeure|demeurent) suspendue?s?\b/i,
     };
 
     function resultOf(t) {
@@ -635,16 +638,43 @@
         return null;
     }
 
+    // Outcome of the proceeding from a final judgment or order. A final order made on
+    // a motion ("decision is with regard to the motion ... Result: granted") reports the
+    // result of the MOTION — e.g. a motion to strike the notice of appeal "granted" — so
+    // the motion's result and "motion ... is allowed" are set aside and only what the
+    // order says about the appeal/application counts; if it says nothing readable, the
+    // proceeding is shown as decided (see the docket) rather than guessed.
+    var MOTION_DECISION = /with regard to the motion|concernant (?:\(le\/la\/l'\) )?(?:la |le |l')?requête/i;
+    function outcomeOf(t) {
+        if (!MOTION_DECISION.test(t)) return resultOf(t);
+        var s = t.replace(/\bresult\s*[-:–]\s*(?:granted|allowed|dismissed)(?: in part)?|\brésultat\s*:\s*[^"\n]*/gi, ' ')
+                 .replace(/\b(?:motion|requête)\b[^.;"\n]*?\b(?:is|are|be|est|sont)\s+(?:hereby\s+)?(?:granted|allowed|dismissed|accueillie?s?|accordée?s?|rejetée?s?)(?:\s+in part|\s+en partie)?/gi, ' ');
+        return resultOf(s) || 'decided';
+    }
+
     // Steps a consent / order / letter about time talks about, or null if it does
     // not say (then it is treated as touching every step still running).
     function stepTargets(t, kind) {
         var s = [];
         function add(k) { if (s.indexOf(k) === -1) s.push(k); }
-        if (/(?:subsequent|remaining|further|all other) steps|étapes (?:subséquentes|suivantes|restantes)/i.test(t) &&
+        var all = kind === 'appeal'
+            ? ['appearance', 'ab_agreement', 'appeal_book', 'appellant_memo', 'respondent_memo', 'cross_reply_memo', 'requisition']
+            : ['appearance', 'applicant_affidavits', 'respondent_affidavits', 'applicant_record', 'respondent_record', 'requisition'];
+        // "all steps", "toutes les étapes" — including "all steps except X": an exception
+        // is not parsed, so every step is treated as touched (no date rather than a wrong one).
+        if (/(?:subsequent|remaining|further|all other) steps|\ball (?:the )?(?:steps|time limits|deadlines|timelines)\b|\beach step|étapes (?:subséquentes|suivantes|restantes)|toutes les étapes|tous les délais|chaque étape/i.test(t) &&
             !/governed by the (?:timelines|time limits|periods)[^.]{0,30}\brules\b/i.test(t)) {
-            return kind === 'appeal'
-                ? ['appearance', 'ab_agreement', 'appeal_book', 'appellant_memo', 'respondent_memo', 'cross_reply_memo', 'requisition']
-                : ['appearance', 'applicant_affidavits', 'respondent_affidavits', 'applicant_record', 'respondent_record', 'requisition'];
+            return all;
+        }
+        // Rules named by number ("rule 307, 308, 309 and 310", "règle 343").
+        var RULE_STEPS = kind === 'appeal'
+            ? { 341: ['appearance'], 343: ['ab_agreement'], 345: ['appeal_book'],
+                346: ['appellant_memo', 'respondent_memo', 'cross_reply_memo'], 347: ['requisition'] }
+            : { 305: ['appearance'], 306: ['applicant_affidavits'], 307: ['respondent_affidavits'],
+                308: ['applicant_record'], 309: ['applicant_record'], 310: ['respondent_record'], 314: ['requisition'] };
+        var rn, rnx = /\b(?:rules?|r\.|règles?|regles?)\s*((?:\d{3}(?:\.\d+)?(?:\(\d+\))*(?:\s*(?:,|;|&|and|et|or|ou)\s*)?)+)/gi;
+        while ((rn = rnx.exec(t))) {
+            (rn[1].match(/\d{3}/g) || []).forEach(function (n) { (RULE_STEPS[n] || []).forEach(add); });
         }
         // ("without personal appearance" in every order is not about the notice of appearance)
         if (/notice of appearance|avis de comparution/i.test(t)) add('appearance');
@@ -816,10 +846,11 @@
                     else if (side === 'R') { respAffItems.push(it); isStepFiling = true; }
                 }
 
-                var recordRx = /^(?:applicant'?s'? record|application record|respondent'?s'? record|record\b|dossier (?:de la partie |du |de la |de l')(?:demande|défende|intim))/i;
+                // ("Public Applicant's Record" where a confidential version is also filed; "Dossier (demande)")
+                var recordRx = /^(?:public |confidential )?(?:applicant'?s'? record|application record|respondent'?s'? record|record\b|dossier (?:de la partie |du |de la |de l')(?:demande|défende|intim)|dossier \(demande)/i;
                 if (recordRx.test(t) && /\bfiled\b|déposé/i.test(t) && side !== 'intervener') {
-                    var appRec  = /^(?:applicant'?s'? record|application record|dossier (?:de la partie |du |de la )demande)/i.test(t) || (/^record\b/i.test(t) && side === 'A');
-                    var respRec = /^(?:respondent'?s'? record|dossier (?:de la partie |du |de la |de l')(?:défende|intim))/i.test(t) || (/^record\b/i.test(t) && side === 'R');
+                    var appRec  = /^(?:public |confidential )?(?:applicant'?s'? record|application record|dossier (?:de la partie |du |de la )demande|dossier \(demande)/i.test(t) || (/^record\b/i.test(t) && side === 'A');
+                    var respRec = /^(?:public |confidential )?(?:respondent'?s'? record|dossier (?:de la partie |du |de la |de l')(?:défende|intim))/i.test(t) || (/^record\b/i.test(t) && side === 'R');
                     if (appRec && mark('applicant_record', it)) {
                         m.applicant_record.served = serviceFor(items, i, /record|dossier/i, 'A');
                     }
@@ -851,12 +882,15 @@
             // Outcome on the merits — judgments and final orders only; the latest wins.
             var finalEntry = FCA_RX.finalDecision.test(t) || FCA_RX.decisionOnMerits.test(t);
             if (finalEntry && !/^(?:reasons|motifs|traduction|copy of)/i.test(t)) {
-                var res = resultOf(t);
+                var res = outcomeOf(t);
                 if (res) m.outcome = { status: res, date: it.d };
             }
 
             // Discontinuance of the whole proceeding (not of a cross-appeal or in part)
-            if (FCA_RX.discontinuance.test(t) && side !== 'intervener' &&
+            // A notice "on behalf of" a list of named people (some of many appellants) is partial.
+            var discBy = (t.match(/(?:on behalf of|de la part de|au nom de)\s*:?\s*([^\n]*?)(?:\s+(?:filed|déposé|with consent|avec)\b|$)/i) || [])[1] || '';
+            var discList = (discBy.match(/,/g) || []).length >= 2 && !/appel|applic|respond|demand|défend|intim|parties/i.test(discBy);
+            if (FCA_RX.discontinuance.test(t) && side !== 'intervener' && !discList &&
                 !/cross|incident|in part|en partie|as against|à l'égard d/i.test(t)) mark('discontinued', it);
 
             // Motions. Stay motions tracked separately, as for the Federal Court.
@@ -926,6 +960,12 @@
             var ra = after || respAffItems[0];
             m.respondent_affidavits = { found: true, date: ra.d, served: serviceDateIn(ra.t) };
         }
+
+        // A discontinuance followed by further steps in the proceeding (party filings, a
+        // hearing) was not of the whole proceeding.
+        if (m.discontinued.found && items.some(function (x) {
+            return x.d > m.discontinued.date && (x.step || FCA_RX.heard.test(x.t) || FCA_RX.hearingOrder.test(x.t));
+        })) m.discontinued = blankStep();
 
         // A Rule 74 review is over once a party takes a further step after it.
         if (m.r74_review.status === 'pending' && items.some(function (x) { return x.step && x.d > m.r74_review.date; })) {
@@ -1138,6 +1178,7 @@
         struck:              ['STRUCK', 'red'],
         transferred:         ['TRANSFERRED TO FC', 'neutral'],
         dismissed_for_delay: ['DISMISSED FOR DELAY', 'red'],
+        decided:             ['DECIDED ON MOTION — SEE DOCKET', 'neutral'],
     };
 
     function fcaBadges(m, todayStr) {

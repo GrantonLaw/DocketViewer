@@ -433,3 +433,74 @@ test('an AI result in the same schema renders through milestoneBadges', () => {
     assert.equal(texts(m, '2026-07-06')[1], 'APPEAL BOOK DUE — EXTENDED — SEE DOCKET');
     assert.deepEqual(core.computeDeadlines(core.emptyFcaMilestones('fca_application')).applicantAffidavitsDue, null);
 });
+
+// ── Independent review: fixes found on hold-out dockets ───────────────────────
+
+test('outcome: a final order granting a motion to strike is not "appeal allowed"', () => {
+    const order = entry(27, '2023-11-15', 'Order dated 15-NOV-2023 rendered by The Honourable Mr. Justice Webb \nMatter considered without personal appearance \n' +
+        "The Court's decision is with regard to the motion / document number 13 \nResult: granted \"THIS COURT ORDERS that the Respondent¿s motion to strike " +
+        "the Appellant's notice of appeal is allowed and the Appellant¿s notice of appeal is struck.\" Filed on 15-NOV-2023 \n(Final decision)");
+    const m = appeal([NOA(1, '2023-08-08'), order]);
+    assert.equal(m.outcome.status, 'struck');
+    assert.deepEqual(texts(m, '2023-11-20'), ['APPEAL STRUCK 2023-11-15']);
+    // A final motion order whose effect on the appeal cannot be read closes the file without guessing
+    const vague = entry(5, '2023-11-15', "Order dated 15-NOV-2023 The Court's decision is with regard to the motion / document number 3 Result: granted (Final decision)");
+    const m2 = appeal([NOA(1, '2023-08-08'), vague]);
+    assert.equal(m2.outcome.status, 'decided');
+    assert.equal(texts(m2, '2023-11-20').some(t => /ALLOWED|DUE/.test(t)), false);
+    // Judgments on the appeal itself are unchanged
+    const j = entry(9, '2024-06-07', "Judgment dated 07-JUN-2024 The Court's decision is with regard to Appeal Result: granted in part");
+    assert.equal(appeal([NOA(1, '2023-03-03'), j]).outcome.status, 'allowed_in_part');
+});
+
+test('extension: a consent for "all steps" (even "all steps except ...") touches every step', () => {
+    const consent = entry(5, '2023-05-02', "Consentement à prorogation de délai R7,de moitié pour toutes les étapes, sauf la demande d'audience " +
+        '(voir document, qui est détaillé par date) de la part de toutes les parties déposé le 02-MAI-2023');
+    const m = appeal([NOA(1, '2023-04-06'), entry(3, '2023-04-12', 'Avis de comparution de la part de la partie intimée déposée le 12-AVR-2023'), consent]);
+    assert.ok(texts(m, '2023-05-17').includes('AB AGREEMENT DUE — EXTENDED — SEE DOCKET'));
+    const en = entry(5, '2026-05-02', 'Consent to an extension of time for all steps on behalf of all parties filed on 2026-05-02');
+    assert.ok(texts(appeal([NOA(1, '2026-04-06'), en]), '2026-05-03').includes('AB AGREEMENT DUE — EXTENDED — SEE DOCKET'));
+});
+
+test('extension: rules named by number ("rule 307, 308, 309 and 310") reach those steps', () => {
+    const es = [
+        entry(1, '2023-04-27', 'Notice of application and 2 copies with regard to Judicial Review (s.28) filed on 27-APR-2023'),
+        entry(2, '2023-04-28', 'Notice of appearance on behalf of Respondent filed on 28-APR-2023'),
+        entry(3, '2023-06-06', "Solicitor's certificate of service on behalf of S. White confirming service of the Applicant's Affidavit as per Rule 306 upon Respondent by electronic service on 06-JUN-2023 filed on 06-JUN-2023"),
+        entry(4, '2023-07-11', 'Consent to to an extension of time for the parties to serve and file their rule 307, 308, 309 and 310 in conformity with Rule 7 of the Federal Court Rules. on behalf of the applicant the respondent filed on 11-JUL-2023'),
+        entry(5, '2023-07-21', "Affidavit of L. Black on behalf of the respondent sworn on 21-JUL-2023 confirming service of Respondent's Affidavit Rule 307 on the applicant by electronic mail on 21-JUL-2023 filed on 21-JUL-2023"),
+    ];
+    assert.ok(texts(app(es), '2023-07-22').includes('APPLICANT RECORD DUE — EXTENDED — SEE DOCKET'));
+    const more = es.concat([entry(6, '2023-09-19', "Applicant's Record Number of copies received/prepared: 1 on behalf of Applicant filed on 19-SEP-2023")]);
+    assert.ok(texts(app(more), '2023-09-20').includes('RESPONDENT RECORD DUE — EXTENDED — SEE DOCKET'));
+});
+
+test('discontinuance by some named appellants, followed by further steps, is not of the whole appeal', () => {
+    const disc = entry(11, '2023-05-26', 'Notice of discontinuance on behalf of MICHELLE GUY, TREVOR SHEFFEL, LEEANNE JAMES, ELISA HO filed on 26-MAY-2023');
+    const m = appeal([NOA(1, '2023-03-03'), entry(9, '2023-05-19', 'Memorandum of fact and law on behalf of Appellants filed on 19-MAY-2023'), disc]);
+    assert.equal(m.discontinued.found, false);
+    assert.ok(texts(m, '2023-05-27').some(t => t.indexOf('RESPONDENT MEMO DUE') === 0));
+    // A plain discontinuance later "undone" by a party step
+    const d2 = entry(11, '2023-05-26', 'Notice of discontinuance on behalf of the appellant filed on 26-MAY-2023');
+    assert.equal(appeal([NOA(1, '2023-03-03'), d2]).discontinued.found, true);
+    assert.equal(appeal([NOA(1, '2023-03-03'), d2,
+        entry(12, '2023-06-23', 'Requisition for hearing - Appeal from Appellant filed on 23-JUN-2023')]).discontinued.found, false);
+});
+
+test('suspension: a French direction that the appeal "est suspendu" holds the timelines', () => {
+    const dir = entry(7, '2026-08-18', 'Directives de la cour - Directives écrites daté(e)(s) du 2026-08-18 rendu(e)(s) par Monsieur le juge LeBlanc reçu(e)(s) le 2026-08-18',
+        { REGISTRY_NOTES_EXTERNAL: "Le déroulement du présent appel est suspendu jusquà ce que lordonnance de la Cour nommant un amicus curiae soit émise et que le Procureur général et lamicus curiae proposent à la Cour, conjointement, dans les 15 jours de la date de ladite ordonnance, un calendrier." });
+    const m = appeal([entry(1, '2026-07-06', "Avis d'appel contre la décision rendu le 10 juin 2026 déposé(e)(s) le 2026-07-06 frais reçus"), dir]);
+    assert.deepEqual(texts(m, '2026-11-10'), ['TIMELINES SUSPENDED — SEE DOCKET']);
+});
+
+test('records and service: "Dossier (demande)", "Public Applicant\'s Record", French "signifié(e)(s) le"', () => {
+    const NOAP = entry(1, '2023-06-16', 'Avis de demande concernant contrôle judiciaire (art.28) déposé le 16-JUN-2023');
+    assert.equal(app([NOAP, entry(13, '2023-10-04', 'Dossier (demande) Nombre de copies reçu/préparé: 0 de la part de la partie demanderesse déposé le 04-OCT-2023')]).applicant_record.found, true);
+    assert.equal(app([NOAP, entry(48, '2024-05-09', "Public Applicant's Record + 4 hard copies Number of copies received/prepared: 1 on behalf of Applicant filed on 09-MAY-2024")]).applicant_record.found, true);
+    assert.equal(app([NOAP, entry(8, '2023-12-01', 'Dossier (requête) dans lequel se trouve(nt) le(s) document(s) original(aux) suivant(s) : 21 de la part AQAADI déposé le 01-DEC-2023')]).applicant_record.found, false);
+    const m = appeal([entry(1, '2026-07-06', "Avis d'appel contre la décision déposé(e)(s) le 2026-07-06 frais reçus"),
+        entry(2, '2026-07-07', "Attestation de signification de l'avocat au nom de : la partie appelante confirmant la signification de 1 - Avis d'appel avec preuve de signification à la partie intimé par courriel signifié(e)(s) le 2026-07-07 déposé(e)(s) le 2026-07-07")]);
+    assert.equal(m.notice_of_appeal.served, '2026-07-07');
+    assert.ok(texts(m, '2026-07-08').includes('APPEARANCE DUE 2026-07-17'));
+});

@@ -124,7 +124,7 @@ hearing_scheduled — An order fixing the time and place of the hearing of the a
 
 heard — The appeal/application itself was heard ("This matter comes on for hearing" where "Before the Court" is the appeal / judicial review, not a motion).
 
-outcome — The Court's final disposition of the proceeding, from a Judgment or a final Order only (never from an order on a motion, never from Reasons, translations or copies of a lower court's decision).
+outcome — The Court's final disposition of the proceeding, from a Judgment or a final Order only (never from Reasons, translations or copies of a lower court's decision). An order on a motion counts only if it disposes of the whole proceeding (e.g. strikes or quashes the notice of appeal, dismisses the appeal/application): then the status is what happened to the proceeding, not the motion's result — a motion to strike "granted" means "struck", never "allowed".
   status: null | "allowed" | "allowed_in_part" | "dismissed" | "removed" (notice of appeal removed from the file / file closed, e.g. after a Rule 74 review) | "struck" | "transferred" (to the Federal Court) | "dismissed_for_delay"
   In this Court, "Result - granted" on a judgment of the appeal/application means "allowed".
 
