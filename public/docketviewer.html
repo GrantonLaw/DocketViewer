@@ -13,11 +13,11 @@
     })();
     </script>
     <title>Federal Court Docket Viewer — Granton Law</title>
-    <meta name="description" content="Search Canadian Federal Court dockets by court file number or party name. Browse recorded entries with automatic detection of key procedural milestones.">
+    <meta name="description" content="Search Canadian Federal Court and Federal Court of Appeal dockets by court file number or party name. Browse recorded entries with automatic detection of key procedural milestones.">
     <link rel="canonical" href="https://docketviewer.grantonlaw.ca/docketviewer.html">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Federal Court Docket Viewer">
-    <meta property="og:description" content="Search Canadian Federal Court dockets by court file number or party name. Browse recorded entries with automatic detection of key procedural milestones.">
+    <meta property="og:description" content="Search Canadian Federal Court and Federal Court of Appeal dockets by court file number or party name. Browse recorded entries with automatic detection of key procedural milestones.">
     <meta property="og:url" content="https://docketviewer.grantonlaw.ca/docketviewer.html">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏛️</text></svg>">
 
@@ -326,7 +326,7 @@
         <div id="input-file">
             <div class="input-group input-group-sm" style="width:100%; max-width:620px">
                 <input type="text" id="courtNumberInput" class="form-control"
-                       placeholder="IMM-12345-25  (comma-separated for bulk)"
+                       placeholder="IMM-12345-25 or A-123-25  (comma-separated for bulk)"
                        onkeydown="if(event.key==='Enter') loadDocket()">
                 <button class="btn btn-primary" onclick="loadDocket()">Search</button>
             </div>
@@ -342,6 +342,11 @@
                    placeholder="Name or style of cause"
                    onkeydown="if(event.key==='Enter') searchParty()">
             <button class="btn btn-primary" onclick="searchParty()">Search</button>
+        </div>
+        <!-- Party search court selector — shown only in party search mode -->
+        <div class="btn-group btn-group-sm flex-shrink-0" id="party-court-wrap" style="display:none" role="group" aria-label="Court">
+            <button type="button" class="btn btn-outline-secondary search-mode-btn active" id="pc-fc" onclick="setPartyCourt('fc')">Federal Court</button>
+            <button type="button" class="btn btn-outline-secondary search-mode-btn" id="pc-fca" onclick="setPartyCourt('fca')">Court of Appeal</button>
         </div>
         <!-- Party proceeding type filter — shown only in party search mode -->
         <div class="btn-group btn-group-sm flex-shrink-0" id="party-filter-wrap" style="display:none" role="group" aria-label="Proceeding filter">
@@ -397,15 +402,15 @@
                 <div class="divider"></div>
                 <div class="row g-3" id="counsel-row">
                     <div class="col-6 col-md-3" id="applicant-info">
-                        <div class="meta-label">Firm (Applicant)</div>
+                        <div class="meta-label" id="applicant-firm-label">Firm (Applicant)</div>
                         <div class="meta-value" id="applicant-firm">—</div>
-                        <div class="meta-label mt-2">Counsel (Applicant)</div>
+                        <div class="meta-label mt-2" id="applicant-counsel-label">Counsel (Applicant)</div>
                         <div class="meta-value" id="applicant-counsel">—</div>
                     </div>
                     <div class="col-6 col-md-3" id="respondent-info" style="display:none">
-                        <div class="meta-label">Firm (Respondent)</div>
+                        <div class="meta-label" id="respondent-firm-label">Firm (Respondent)</div>
                         <div class="meta-value" id="respondent-firm">—</div>
-                        <div class="meta-label mt-2">Counsel (Respondent)</div>
+                        <div class="meta-label mt-2" id="respondent-counsel-label">Counsel (Respondent)</div>
                         <div class="meta-value" id="respondent-counsel">—</div>
                     </div>
                 </div>
@@ -416,22 +421,24 @@
                     <span class="panel-label">Milestones</span>
                     <span class="ms-help-icon"
                           data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-placement="right"
-                          data-bs-content="Detects milestones by searching for keywords in the docket entries. Fast and free, but may miss events that use unusual or unexpected phrasing.">?</span>
+                          data-bs-content="Detects milestones by searching for keywords in the docket entries. Fast and free, but may miss events that use unusual or unexpected phrasing. Covers Federal Court immigration leave applications and Federal Court of Appeal appeals and s.28 applications (including due dates under the Federal Courts Rules); other Court of Appeal proceedings have no milestone tracking.">?</span>
                 </div>
                 <div id="status-row" class="status-row"></div>
 
-                <!-- Panel 2: AI milestones -->
+                <!-- Panel 2: AI milestones (hidden for proceedings with no milestone tracking) -->
+                <div id="ai-panel">
                 <div class="divider mt-3"></div>
                 <div class="d-flex align-items-center gap-1 mb-1">
                     <span class="panel-label">Advanced Milestone Analysis</span>
                     <span class="ms-help-icon"
                           data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-placement="right"
-                          data-bs-content="Uses Gemini 3.5 Flash Lite to analyse docket entries for milestones. More thorough than keyword matching, but may incur costs for the host of this tool. Recommended only when the standard Milestones panel is insufficient. Analysis may be slow or unavailable during peak demand.">?</span>
+                          data-bs-content="Uses Gemini 3.5 Flash Lite to analyse docket entries for the same milestones as the keyword panel (leave application milestones for Federal Court files; appeal or s.28 application milestones for the Court of Appeal). More thorough than keyword matching, but may incur costs for the host of this tool. Recommended only when the standard Milestones panel is insufficient. Analysis may be slow or unavailable during peak demand.">?</span>
                 </div>
                 <div id="ai-analyse-wrap" class="mb-1">
                     <button id="ai-analyse-btn" class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem;" onclick="triggerAIMilestones()">Analyse</button>
                 </div>
                 <div id="ai-status-row" class="status-row"></div>
+                </div>
 
             </div>
         </div>
@@ -594,6 +601,8 @@ var _bulkGen      = 0;         // bumped per bulk search, so stale responses are
 var _bulkExport   = null;      // in-progress Excel export job, if any
 var _partyAll     = [];        // full party search results (unfiltered)
 var _partyFilter  = 'imm';    // 'imm' | 'all'
+var _partyCourt   = 'fc';     // 'fc' | 'fca' — court selected for party search
+var _partyResultsCourt = 'fc'; // court the current _partyAll results came from
 
 // ── Theme (dark mode) ────────────────────────────────────────────────────────
 var THEME_KEY = 'dv_theme';
@@ -662,11 +671,11 @@ function setSearchMode(mode) {
     if (mode === 'file') {
         $('#tab-file').addClass('active');
         $('#input-file').show();
-        $('#input-party, #party-filter-wrap').hide();
+        $('#input-party, #party-court-wrap, #party-filter-wrap').hide();
     } else {
         $('#tab-party').addClass('active');
         $('#input-file').hide();
-        $('#input-party, #party-filter-wrap').show();
+        $('#input-party, #party-court-wrap, #party-filter-wrap').show();
         // Clear results when switching to party search
         $('#case-section, #bulk-section, #error-msg').hide();
     }
@@ -694,6 +703,14 @@ function loadDocket(courtNumber) {
         loadBulk(courtNumber);
         return;
     }
+
+    var parsed = parseCourtNumber(courtNumber);
+    if (!parsed.valid) {
+        $('#case-section, #bulk-section, #party-section').hide();
+        showError('Invalid court number format: <strong>' + escHtml(courtNumber) + '</strong>');
+        return;
+    }
+    courtNumber = parsed.normalized;
 
     try { history.replaceState(null, '', '?' + encodeURIComponent(courtNumber)); } catch (err) {}
     document.title = courtNumber + ' — Docket Viewer';
@@ -736,7 +753,7 @@ function loadDocket(courtNumber) {
 
 // ── Bulk search ───────────────────────────────────────────────────────────────
 
-// Extracts court file numbers (e.g. IMM-12345-25) from any cell text in an uploaded CSV/Excel file
+// Extracts court file numbers (e.g. IMM-12345-25, A-123-25, 26-A-29) from any cell text in an uploaded CSV/Excel file
 function handleFileUpload(file) {
     if (!file) return;
 
@@ -751,10 +768,14 @@ function handleFileUpload(file) {
                 var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
                 rows.forEach(function (row) {
                     row.forEach(function (cell) {
-                        var text = String(cell || '').trim().toUpperCase();
+                        var text = String(cell || '').trim().toUpperCase().replace(/[‐-―−]/g, '-');
                         if (!text) return;
-                        var matches = text.match(/\b[A-Z0-9]+-[0-9]+-[0-9]{2,4}\b/g);
-                        if (matches) numbers = numbers.concat(matches);
+                        // Candidates by shape, then confirmed by parseCourtNumber; a number
+                        // always has a letter, which keeps dates like 2025-11-10 out.
+                        var matches = text.match(/\b(?:[A-Z0-9]+-[0-9]+-[0-9]{2,4}|[0-9]{2}-A-[0-9]+)\b/g);
+                        if (matches) numbers = numbers.concat(matches.filter(function (n) {
+                            return /[A-Z]/.test(n) && parseCourtNumber(n).valid;
+                        }));
                     });
                 });
             });
@@ -784,17 +805,17 @@ function loadBulk(input) {
     var numbers = input.split(',')
         .map(function (s) { return s.trim().toUpperCase(); })
         .filter(Boolean);
-    numbers = Array.from(new Set(numbers)); // de-dupe, keep order — each file is one row and one Excel tab
 
     if (!numbers.length) { showError('No court file numbers found.'); return; }
 
-    var invalid = numbers.filter(function (cn) {
-        return !/^[A-Z0-9]+-[0-9]+-[0-9]{2,4}$/.test(cn);
-    });
+    var invalid = numbers.filter(function (cn) { return !parseCourtNumber(cn).valid; });
     if (invalid.length) {
         showError('Invalid court number format: <strong>' + invalid.map(escHtml).join(', ') + '</strong>');
         return;
     }
+
+    numbers = numbers.map(function (cn) { return parseCourtNumber(cn).normalized; });
+    numbers = Array.from(new Set(numbers)); // de-dupe, keep order — each file is one row and one Excel tab
 
     var gen = ++_bulkGen;   // results from an earlier, superseded bulk search are ignored
     _bulkData  = {};
@@ -860,16 +881,21 @@ function loadBulk(input) {
 
                 var c       = caseData.data[0];
                 var entries = reData.data || [];
-                var file    = _bulkData[cn] = { cn: cn, status: 'ok', caseData: c, entries: entries, parties: [], ai: null };
+                var kind    = proceedingKind(c, entries);
+                var file    = _bulkData[cn] = { cn: cn, status: 'ok', kind: kind, caseData: c, entries: entries, parties: [], ai: null };
 
                 $row.find('.bulk-soc').text(c.STYLE_OF_CAUSE || '—');
 
-                var ms      = detectMilestonesRegex(entries);
+                var ms      = detectMilestones(entries, kind);
                 var $msWrap = $('<div>').addClass('status-row');
                 renderMilestones(ms, $msWrap[0]);
                 $row.find('.ms-cell').html($msWrap);
 
-                $row.find('.bulk-ai-btn').prop('disabled', !!_bulkExport);
+                if (kind === 'other') {
+                    $row.find('.bulk-ai-btn').closest('td').html('<span class="text-muted" style="font-size:0.75rem">n/a</span>');
+                } else {
+                    $row.find('.bulk-ai-btn').prop('disabled', !!_bulkExport);
+                }
 
                 // Parties (firm/counsel) are only needed for the Excel export —
                 // non-critical, so a failure leaves counsel as "—".
@@ -917,13 +943,13 @@ var AI_PACE_MS      = 9500;
 var AI_MAX_ATTEMPTS = 3;
 var _lastAICall     = 0;   // when the last milestones request was sent, from any button
 
-function requestAIMilestones(entries) {
+function requestAIMilestones(entries, kind) {
     _lastAICall = Date.now();
     return $.ajax({
         url:         PROXY_URL + '?type=milestones',
         method:      'POST',
         contentType: 'application/json',
-        data:        JSON.stringify({ entries: entries }),
+        data:        JSON.stringify({ entries: entries, kind: kind || 'aljr' }),
         dataType:    'json',
         timeout:     60000,
     });
@@ -973,7 +999,7 @@ $(document).on('click', '.bulk-ai-btn', function () {
     $('[data-ai-for="' + cn + '"]').remove();
     $btn.prop('disabled', true).text('Analysing…');
 
-    requestAIMilestones(file.entries)
+    requestAIMilestones(file.entries, file.kind)
         .done(function (m) {
             file.ai = m;
             showBulkAIResult(cn, m);
@@ -1035,7 +1061,8 @@ function loadExcelJS() {
 function aiPendingFiles() {
     return _bulkOrder.filter(function (cn) {
         var f = _bulkData[cn];
-        return !f || (f.status === 'ok' && !f.ai);   // still-loading files may need AI too
+        if (!f) return !/^\d{2}-A-/.test(cn);        // still loading: may need AI, but preliminary files never do
+        return f.status === 'ok' && f.kind !== 'other' && !f.ai;
     });
 }
 
@@ -1050,6 +1077,7 @@ function openBulkExcelDialog() {
 
     var pending = aiPendingFiles().length;
     var done    = _bulkOrder.filter(function (cn) { return _bulkData[cn] && _bulkData[cn].ai; }).length;
+    var noMs    = _bulkOrder.filter(function (cn) { return _bulkData[cn] && _bulkData[cn].kind === 'other'; }).length;
     var note;
     if (!pending) {
         note = 'AI analysis has already been run on every file, so it will be reused at no extra cost.';
@@ -1059,6 +1087,7 @@ function openBulkExcelDialog() {
                '. Requests are paced to stay within the server’s rate limit, so this will take ' +
                fmtDuration(pending * AI_PACE_MS) + '. Keyword milestones are immediate.';
     }
+    if (noMs) note += ' ' + noMs + ' file' + (noMs === 1 ? ' is' : 's are') + ' of a type with no milestone tracking and will be skipped.';
     $('#bulk-excel-ai-note').text(note);
     bootstrap.Modal.getOrCreateInstance('#bulk-excel-modal').show();
 }
@@ -1097,7 +1126,7 @@ async function analyseForExport(job, file) {
         await exportSleep(job, _lastAICall + AI_PACE_MS - Date.now());
         if (job.cancelled) return;
         try {
-            var m = await requestAIMilestones(file.entries);
+            var m = await requestAIMilestones(file.entries, file.kind);
             if (job.gen !== _bulkGen) return;   // a newer search has replaced this table
             file.ai = m;
             file.aiError = null;
@@ -1208,20 +1237,35 @@ function searchParty() {
     $('#case-section, #bulk-section, #party-section, #error-msg').hide();
     $('#loading').show();
 
-    fcGetJSON(PROXY_URL + '?type=soc&q=' + encodeURIComponent(q))
+    var court = _partyCourt;
+    fcGetJSON(PROXY_URL + '?type=soc&q=' + encodeURIComponent(q) + '&court=' + court)
         .done(function (data) {
+            if (court !== _partyCourt) return;   // the court selector changed while this was loading
             $('#loading').hide();
             _partyAll = data.data || [];
+            _partyResultsCourt = court;
             if (!_partyAll.length) {
-                showError('No cases found matching <strong>' + escHtml(q) + '</strong>.');
+                showError('No cases found matching <strong>' + escHtml(q) + '</strong>' +
+                          (court === 'fca' ? ' in the Federal Court of Appeal' : '') + '.');
                 return;
             }
             renderPartyResults();
         })
         .fail(function () {
+            if (court !== _partyCourt) return;
             $('#loading').hide();
             showError('Party search is currently unavailable. Please search by court file number instead.');
         });
+}
+
+// Results belong to the court they were searched in, so switching court clears them
+function setPartyCourt(court) {
+    if (court === _partyCourt) return;
+    _partyCourt = court;
+    _partyAll   = [];
+    $('#pc-fc, #pc-fca').removeClass('active');
+    $('#pc-' + court).addClass('active');
+    $('#party-section, #loading, #error-msg').hide();
 }
 
 function setPartyFilter(filter) {
@@ -1234,8 +1278,14 @@ function setPartyFilter(filter) {
 function renderPartyResults() {
     var CAP = 200;
 
+    // IMM: Federal Court immigration proceedings; for the Court of Appeal (whose
+    // proceeding type is always "A"), natures that name Immigration.
     var filtered = (_partyFilter === 'imm')
-        ? _partyAll.filter(function (c) { return (c.PRCDG_TYPE || '').toUpperCase() === 'IMM'; })
+        ? _partyAll.filter(function (c) {
+            return _partyResultsCourt === 'fca'
+                ? /immigration/i.test(c.ENGLISH_NATURE_DESC || '')
+                : (c.PRCDG_TYPE || '').toUpperCase() === 'IMM';
+        })
         : _partyAll;
 
     var total  = filtered.length;
@@ -1267,7 +1317,8 @@ function renderPartyResults() {
     if (!cases.length) {
         tbody.append(
             '<tr><td colspan="5" class="text-center text-muted py-3" style="font-size:0.85rem">' +
-            'No IMM proceedings found for this name — try switching to <strong>All</strong>.' +
+            (_partyResultsCourt === 'fca' ? 'No immigration proceedings found for this name' : 'No IMM proceedings found for this name') +
+            ' — try switching to <strong>All</strong>.' +
             '</td></tr>'
         );
         return;
@@ -1306,12 +1357,12 @@ function renderPage(c, re, partiesData) {
     $('#filing-date').text(fmtDate(c.FILE_DT || c.FILING_DATE));
     $('#track').text(c.ENGLISH_TRACK_NAME || c.ENGLISH_PROCEEDING_TYPE || '—');
 
-    renderPartyInfo(partiesData, c.STYLE_OF_CAUSE || '');
-
     var entries = re.data || [];
+    var kind    = proceedingKind(c, entries);
     $('#re-count').text(entries.length);
 
-    loadMilestones(entries);
+    renderPartyInfo(partiesData, c.STYLE_OF_CAUSE || '', kind);
+    loadMilestones(entries, kind);
 
     if ($.fn.DataTable.isDataTable('#docketTable')) {
         $('#docketTable').DataTable().destroy();
@@ -1356,11 +1407,21 @@ function renderPage(c, re, partiesData) {
 
 // ── Party / counsel ──────────────────────────────────────────────────────────
 
-function renderPartyInfo(partiesData, styleOfCause) {
+function renderPartyInfo(partiesData, styleOfCause, kind) {
     var parties = (partiesData && partiesData.data) ? partiesData.data : [];
-    if (!parties.length) return;
 
-    var counsel = resolveCounsel(parties, styleOfCause);
+    var counsel = resolveCounsel(parties, styleOfCause, kind);
+
+    // Side names come from the proceeding (Applicant, or Appellant on an appeal)
+    var labels = counsel.labels || { applicant: 'Applicant', respondent: 'Respondent' };
+    $('#applicant-firm-label').text('Firm (' + labels.applicant + ')');
+    $('#applicant-counsel-label').text('Counsel (' + labels.applicant + ')');
+    $('#respondent-firm-label').text('Firm (' + labels.respondent + ')');
+    $('#respondent-counsel-label').text('Counsel (' + labels.respondent + ')');
+
+    // Clear the previous file's counsel before filling in this one's
+    $('#applicant-firm, #applicant-counsel, #respondent-firm, #respondent-counsel').text('—');
+    $('#respondent-info').hide();
 
     if (counsel.applicant) {
         $('#applicant-firm').text(counsel.applicant.firm);
@@ -1377,12 +1438,15 @@ function renderPartyInfo(partiesData, styleOfCause) {
 // ── Single-file milestone panels ─────────────────────────────────────────────
 
 var _currentEntries = [];
+var _currentKind    = 'aljr';
 
-function loadMilestones(entries) {
+function loadMilestones(entries, kind) {
     _currentEntries = entries || [];
-    var m = detectMilestonesRegex(_currentEntries);
+    _currentKind    = kind || 'aljr';
+    var m = detectMilestones(_currentEntries, _currentKind);
     renderMilestones(m, '#status-row');
-    // Reset AI panel
+    // Reset AI panel — hidden altogether where there is nothing to track
+    $('#ai-panel').toggle(_currentKind !== 'other');
     $('#ai-status-row').empty();
     $('#ai-analyse-wrap').html('<button id="ai-analyse-btn" class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem;" onclick="triggerAIMilestones()">Analyse</button>');
 }
@@ -1396,7 +1460,7 @@ function triggerAIMilestones() {
         url:         PROXY_URL + '?type=milestones',
         method:      'POST',
         contentType: 'application/json',
-        data:        JSON.stringify({ entries: _currentEntries }),
+        data:        JSON.stringify({ entries: _currentEntries, kind: _currentKind }),
         dataType:    'json',
         timeout:     60000,
     })
@@ -1427,7 +1491,9 @@ function renderMilestones(m, target) {
         return badge(b.text, 's-' + b.tone);
     }).join('');
 
-    if (!html) {
+    if (!html && m && m.kind === 'other') {
+        html = '<span class="text-muted" style="font-size:0.78rem">' + escHtml(MILESTONES_UNAVAILABLE) + '</span>';
+    } else if (!html) {
         html = '<span class="text-muted" style="font-size:0.78rem">No milestones detected yet</span>';
     }
 

@@ -1,12 +1,12 @@
 # DocketViewer
 
-A fast, AI-enhanced web tool for exploring Canadian Federal Court dockets. Search by court file number or party name, browse recorded entries, and get automatic milestone detection powered by Gemini.
+A fast, AI-enhanced web tool for exploring Canadian Federal Court and Federal Court of Appeal dockets. Search by court file number or party name, browse recorded entries, and get automatic milestone detection powered by Gemini.
 
-- **Live API**: Pulls real-time docket data from the [Federal Court of Canada](https://www.fct-cf.ca)
-- **Keyword Detection**: Automatically flags key procedural milestones (perfected, RMOA, stay, leave decision, etc.)
+- **Live API**: Pulls real-time docket data from the [Federal Court of Canada](https://www.fct-cf.ca) and the Federal Court of Appeal
+- **Keyword Detection**: Automatically flags key procedural milestones (perfected, RMOA, stay, leave decision, etc.; for the Court of Appeal, the steps of an appeal or s.28 application, with due dates under the Federal Courts Rules)
 - **AI Analysis**: Optional deep-dive using Gemini to catch nuanced procedural events
-- **Bulk Search**: Submit multiple court file numbers at once
-- **Party/SOC Search**: Look up cases by party name or style of cause
+- **Bulk Search**: Submit multiple court file numbers at once, Federal Court and Court of Appeal mixed
+- **Party/SOC Search**: Look up cases by party name or style of cause, in either court
 
 ## Quick Start
 
@@ -73,20 +73,21 @@ separate Pages project and no proxy hop.
 ## Usage
 
 ### Single Case
-Enter a court file number (e.g., `IMM-12345-25`) and click **Search**.
+Enter a court file number (e.g., `IMM-12345-25`, or `A-123-25` for the Federal Court of Appeal) and click **Search**. Court of Appeal files also accept the Court's preliminary file numbers (e.g., `26-A-29`), which show the docket and details but no milestones.
 
 ### Bulk Search
-Enter comma-separated file numbers (e.g., `IMM-1-25, IMM-2-25`) to load multiple at once with milestone summaries.
+Enter comma-separated file numbers (e.g., `IMM-1-25, A-2-25`) to load multiple at once with milestone summaries. **Upload List** reads file numbers out of a CSV or Excel file. Federal Court and Court of Appeal numbers can be mixed.
 
-**Export Excel** builds a workbook with a summary tab and one tab per file (case details, counsel, milestones and recorded entries). It asks whether to use AI milestones; AI requests are paced to the Worker's rate limit, with a progress bar, and any AI analysis already run on the page is reused. **Export CSV** gives the one-row-per-file table.
+**Export Excel** builds a workbook with a summary tab and one tab per file (case details, counsel, milestones and recorded entries). It asks whether to use AI milestones; AI requests are paced to the Worker's rate limit, with a progress bar, and any AI analysis already run on the page is reused (files with no milestone tracking are skipped). **Export CSV** gives the one-row-per-file table.
 
 ### Party Search
-Switch to **Party Search** tab and search by name or style of cause.
+Switch to **Party Search** tab, choose **Federal Court** or **Court of Appeal**, and search by name or style of cause. **IMM** limits results to immigration proceedings (for the Court of Appeal, natures that name Immigration); **All** shows everything.
 
 ## Features
 
 - **Milestone Detection**
   - Keyword-based (fast): Perfected, RMOA, reply, stay, CTR, JR scheduled/heard, leave decision, discontinued
+  - Federal Court of Appeal: appeals (s.27) and judicial review applications (s.28) are tracked step by step (appearance, appeal book, memoranda, requisition for hearing, hearing and judgment, and the application equivalents), with next-step due dates computed under the Federal Courts Rules. Other Court of Appeal proceedings show no milestones.
   - AI-enhanced (optional): Gemini analyzes entries for procedural subtleties
 
 - **Docket Table**
@@ -94,7 +95,7 @@ Switch to **Party Search** tab and search by name or style of cause.
   - Filter, sort, export to CSV/Excel/PDF
 
 - **Counsel Info**
-  - Applicant & respondent firm/counsel extracted from party data
+  - Applicant & respondent firm/counsel extracted from party data (Appellant & Respondent on Court of Appeal appeals)
 
 ## License
 

@@ -22,6 +22,9 @@
         'only and may be incomplete, inaccurate, or out of date. It does not constitute legal advice. Verify all ' +
         'procedural milestones and deadlines against the official court record.';
 
+    // Shown (page and workbook) for proceedings with no milestone tracking
+    var MILESTONES_UNAVAILABLE = 'Milestone tracking is not available for this type of proceeding';
+
     // Excel sheet names: max 31 chars, none of []:*?/\ , unique, and not "Summary"
     function sheetNameFor(cn, used) {
         var base = String(cn).replace(/[\[\]:*?\/\\]/g, '-').slice(0, 31) || 'File';
@@ -46,13 +49,24 @@
         return Math.max(1, lines) * lineHeight;
     }
 
+    // The proceeding kind stored on the file record, worked out from the case
+    // data for records that predate it
+    function kindFor(file) {
+        return file.kind || core.proceedingKind(file.caseData, file.entries);
+    }
+
     // Milestones for one file: AI where requested and available, otherwise
-    // keyword detection. Returns { badges, source, note }.
+    // keyword detection. Returns { badges, source, note, unavailable }; files of a
+    // type with no milestone tracking ('other') get neither and no AI fallback note.
     function milestonesFor(file, useAI, todayStr) {
+        var kind = kindFor(file);
+        if (kind === 'other') {
+            return { badges: [], source: 'Keyword', note: '', unavailable: true };
+        }
         if (useAI && file.ai) {
             return { badges: core.milestoneBadges(file.ai, todayStr), source: 'AI', note: '' };
         }
-        var regex = core.detectMilestonesRegex(file.entries || []);
+        var regex = core.detectMilestones(file.entries || [], kind);
         return {
             badges: core.milestoneBadges(regex, todayStr),
             source: 'Keyword',
@@ -139,13 +153,15 @@
         detailRow(ws, 'Date Filed',           f.filed);
         detailRow(ws, 'Track',                f.track);
 
-        var counsel = core.resolveCounsel(file.parties, f.styleOfCause);
+        // Side names follow the proceeding (Applicant, or Appellant on an appeal)
+        var counsel = core.resolveCounsel(file.parties, f.styleOfCause, kindFor(file));
+        var labels  = counsel.labels || { applicant: 'Applicant', respondent: 'Respondent' };
         ws.addRow([]);
-        detailRow(ws, 'Firm (Applicant)',    counsel.applicant ? counsel.applicant.firm    : '—');
-        detailRow(ws, 'Counsel (Applicant)', counsel.applicant ? counsel.applicant.counsel : '—');
+        detailRow(ws, 'Firm (' + labels.applicant + ')',    counsel.applicant ? counsel.applicant.firm    : '—');
+        detailRow(ws, 'Counsel (' + labels.applicant + ')', counsel.applicant ? counsel.applicant.counsel : '—');
         if (counsel.respondent) {
-            detailRow(ws, 'Firm (Respondent)',    counsel.respondent.firm);
-            detailRow(ws, 'Counsel (Respondent)', counsel.respondent.counsel);
+            detailRow(ws, 'Firm (' + labels.respondent + ')',    counsel.respondent.firm);
+            detailRow(ws, 'Counsel (' + labels.respondent + ')', counsel.respondent.counsel);
         }
 
         var ms = milestonesFor(file, opts.useAI, opts.todayStr);
@@ -157,7 +173,7 @@
             first = false;
         }
         if (!ms.badges.length) {
-            detailRow(ws, first ? msLabel : '', 'No milestones detected yet',
+            detailRow(ws, first ? msLabel : '', ms.unavailable ? MILESTONES_UNAVAILABLE : 'No milestones detected yet',
                       { font: { size: 10, italic: true, color: { argb: 'FF7A8694' } } });
         }
         ms.badges.forEach(function (b) {
@@ -211,7 +227,8 @@
         detailRow(ws, 'Status', notFound ? 'Not found' : 'Could not be retrieved',
                   { fill: TONE_FILL.red, font: { size: 10, bold: true, color: { argb: 'FFFFFFFF' } } });
         detailRow(ws, 'Detail', notFound
-            ? 'No court file matching this number was found on the Federal Court docket. Check the number for typos.'
+            ? 'No court file matching this number was found on the ' +
+              (core.parseCourtNumber(file.cn).court === 'FCA' ? 'Federal Court of Appeal' : 'Federal Court') + ' docket. Check the number for typos.'
             : 'The Federal Court server did not respond for this file, even after a retry. Run the search again to retry.');
         detailRow(ws, 'Checked', opts.generatedAt);
     }
@@ -235,10 +252,12 @@
         var notFound = rows.filter(function (r) { return r.file.status === 'notfound'; }).length;
         var errors   = rows.filter(function (r) { return r.file.status === 'error'; }).length;
         var fellBack = rows.filter(function (r) { return r.ms && r.ms.note; }).length;
+        var noMs     = rows.filter(function (r) { return r.ms && r.ms.unavailable; }).length;
+        var noMsNote = noMs ? ' — not available for ' + noMs + ' file' + (noMs === 1 ? '' : 's') + ' of a type with no milestone tracking' : '';
         var meta = [
             ['Generated',  opts.generatedAt],
-            ['Milestones', !opts.useAI ? 'Keyword detection'
-                         : 'AI analysis (Gemini)' + (fellBack ? ' — keyword detection for ' + fellBack + ' file' + (fellBack === 1 ? '' : 's') + ' where AI was unavailable' : '')],
+            ['Milestones', (!opts.useAI ? 'Keyword detection'
+                         : 'AI analysis (Gemini)' + (fellBack ? ' — keyword detection for ' + fellBack + ' file' + (fellBack === 1 ? '' : 's') + ' where AI was unavailable' : '')) + noMsNote],
             ['Files',      rows.length + (notFound ? ' — ' + notFound + ' not found' : '') + (errors ? ' — ' + errors + ' could not be retrieved' : '')],
         ];
         meta.forEach(function (m) {
@@ -263,7 +282,8 @@
                 row = ws.addRow([
                     { text: file.cn, hyperlink: internalLink(r.sheetName) },
                     f.styleOfCause, f.nature, f.office, f.filed,
-                    r.ms.badges.map(function (b) { return b.text; }).join('; ') || 'No milestones detected yet',
+                    r.ms.badges.map(function (b) { return b.text; }).join('; ') ||
+                        (r.ms.unavailable ? MILESTONES_UNAVAILABLE : 'No milestones detected yet'),
                     r.ms.note,
                 ]);
             } else {
@@ -294,7 +314,7 @@
         disc.height = 36;
     }
 
-    // files: [{ cn, status: 'ok'|'notfound'|'error', caseData, entries, parties, ai, aiError }]
+    // files: [{ cn, status: 'ok'|'notfound'|'error', kind, caseData, entries, parties, ai, aiError }]
     // opts:  { useAI, todayStr (YYYY-MM-DD), generatedAt (display string), siteUrl }
     function buildBulkWorkbook(ExcelJS, files, opts) {
         var wb = new ExcelJS.Workbook();
@@ -315,7 +335,8 @@
         return wb;
     }
 
-    var api = { buildBulkWorkbook: buildBulkWorkbook, sheetNameFor: sheetNameFor };
+    var api = { buildBulkWorkbook: buildBulkWorkbook, sheetNameFor: sheetNameFor, milestonesFor: milestonesFor,
+                MILESTONES_UNAVAILABLE: MILESTONES_UNAVAILABLE };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else Object.assign(root, api);
 })(typeof globalThis !== 'undefined' ? globalThis : this);
